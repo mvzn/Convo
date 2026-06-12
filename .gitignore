@@ -2,6 +2,10 @@
 /build/
 **/cmake-build-*/
 
+# Test runner build artifacts
+tests/build/
+tests/runtests
+
 # IDE / editor
 .vscode/
 .idea/

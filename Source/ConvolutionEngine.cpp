@@ -18,7 +18,7 @@ void ConvolutionEngine::reset()
 
 juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>& raw,
                                                   double irSampleRate,
-                                                  const IRBakeParams& bp) const
+                                                  const IRBakeParams& bp)
 {
     const int numCh = raw.getNumChannels();
     const int n     = raw.getNumSamples();

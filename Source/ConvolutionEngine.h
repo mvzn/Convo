@@ -64,12 +64,16 @@ public:
     int  getLatencySamples() const noexcept { return latencySamples; }
     bool hasIR() const noexcept { return loaded.load(); }
 
+    /** Window the raw IR into the convolution kernel: reverse -> fade-in -> decay
+        (+truncate at -60 dB) -> tail-taper. Pure function of its arguments; exposed
+        static so the bake pipeline can be unit-tested without a live convolution. */
+    static juce::AudioBuffer<float> bake (const juce::AudioBuffer<float>& raw, double irSampleRate,
+                                          const IRBakeParams& bp);
+
     static constexpr int    kLongLatency    = 512;   // samples, long-IR engine head latency
     static constexpr double kThresholdSeconds = 1.5; // raw-length boundary between engines
 
 private:
-    juce::AudioBuffer<float> bake (const juce::AudioBuffer<float>& raw, double irSampleRate,
-                                   const IRBakeParams& bp) const;
     void loadIntoActive (const juce::AudioBuffer<float>& baked, double irSampleRate);
 
     juce::dsp::Convolution shortEngine { juce::dsp::Convolution::Latency { 0 } };
