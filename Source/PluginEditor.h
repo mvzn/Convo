@@ -2,6 +2,7 @@
 
 #include <JuceHeader.h>
 #include "PluginProcessor.h"
+#include "ConvoLookAndFeel.h"
 
 #include <memory>
 
@@ -33,6 +34,8 @@ private:
     void drawMeter (juce::Graphics&, juce::Rectangle<int> zone, float level, const juce::String& label);
 
     ConvoAudioProcessor& processor;
+
+    ConvoLookAndFeel lookAndFeel;
 
     // IR display (shows the *processed* IR)
     juce::AudioFormatManager  thumbnailFormatManager;

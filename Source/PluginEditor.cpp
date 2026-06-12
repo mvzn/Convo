@@ -12,6 +12,8 @@ namespace
 ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     : juce::AudioProcessorEditor (&p), processor (p)
 {
+    setLookAndFeel (&lookAndFeel);
+
     thumbnailFormatManager.registerBasicFormats();
     thumbnail.addChangeListener (this);
 
@@ -23,7 +25,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
         addAndMakeVisible (s);
         l.setText (name, juce::dontSendNotification);
         l.setJustificationType (juce::Justification::centred);
-        l.setColour (juce::Label::textColourId, juce::Colours::lightgrey);
+        l.setColour (juce::Label::textColourId, ConvoColours::label);
         addAndMakeVisible (l);
     };
 
@@ -39,9 +41,11 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setup (decaySlider,    decayLabel,    "Decay");
     setup (taperSlider,    taperLabel,    "Taper");
 
+    reverseButton.setColour (juce::ToggleButton::tickColourId, ConvoColours::mint);    // green = active
+    bypassButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);  // copper = bypassed
     for (auto* b : { &reverseButton, &bypassButton })
     {
-        b->setColour (juce::ToggleButton::textColourId, juce::Colours::lightgrey);
+        b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
         addAndMakeVisible (*b);
     }
 
@@ -61,7 +65,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     lastFileName = processor.getIRLibrary().getDisplayName();
     fileNameLabel.setText (lastFileName, juce::dontSendNotification);
-    fileNameLabel.setColour (juce::Label::textColourId, juce::Colours::white);
+    fileNameLabel.setColour (juce::Label::textColourId, ConvoColours::text);
     fileNameLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (fileNameLabel);
 
@@ -78,6 +82,7 @@ ConvoAudioProcessorEditor::~ConvoAudioProcessorEditor()
 {
     stopTimer();
     thumbnail.removeChangeListener (this);
+    setLookAndFeel (nullptr);
 }
 
 void ConvoAudioProcessorEditor::rebuildThumbnail()
@@ -102,41 +107,43 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
 void ConvoAudioProcessorEditor::drawMeter (juce::Graphics& g, juce::Rectangle<int> zone,
                                            float level, const juce::String& label)
 {
-    g.setColour (juce::Colour (0xff141414));
+    g.setColour (ConvoColours::bg);
     g.fillRoundedRectangle (zone.toFloat(), 3.0f);
+    g.setColour (ConvoColours::border);
+    g.drawRoundedRectangle (zone.toFloat(), 3.0f, 1.0f);
 
     const float l = juce::jlimit (0.0f, 1.0f, level);
     if (l > 0.0001f)
     {
-        auto fill = zone.toFloat();
+        auto fill = zone.toFloat().reduced (1.0f);
         fill = fill.removeFromBottom (fill.getHeight() * l);
-        g.setColour (l > 0.95f ? juce::Colours::red : juce::Colour (0xff5ad17a));
-        g.fillRoundedRectangle (fill, 3.0f);
+        g.setColour (l > 0.95f ? ConvoColours::clip : ConvoColours::mint);
+        g.fillRoundedRectangle (fill, 2.0f);
     }
 
-    g.setColour (juce::Colour (0xff888888));
+    g.setColour (ConvoColours::textDim);
     g.drawText (label, zone.getX(), zone.getBottom(), zone.getWidth(), 14,
                 juce::Justification::centred);
 }
 
 void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (juce::Colour (0xff2b2b2b));
+    g.fillAll (ConvoColours::bg);
 
     // drop / waveform area
-    g.setColour (fileOver ? juce::Colour (0xff3d5a80) : juce::Colour (0xff1f1f1f));
+    g.setColour (fileOver ? ConvoColours::accentDeep : ConvoColours::panel);
     g.fillRoundedRectangle (dropZone.toFloat(), 6.0f);
-    g.setColour (juce::Colour (0xff555555));
+    g.setColour (fileOver ? ConvoColours::mint : ConvoColours::border);
     g.drawRoundedRectangle (dropZone.toFloat(), 6.0f, 1.0f);
 
     if (thumbnail.getTotalLength() > 0.0)
     {
-        g.setColour (juce::Colour (0xff6ab0ff));
+        g.setColour (ConvoColours::mint);
         thumbnail.drawChannels (g, waveZone, 0.0, thumbnail.getTotalLength(), 1.0f);
     }
     else
     {
-        g.setColour (juce::Colour (0xff888888));
+        g.setColour (ConvoColours::textDim);
         g.drawText ("Drop .wav / .mp3 / .aiff / .ogg here  (or click Load IR)",
                     waveZone, juce::Justification::centred);
     }

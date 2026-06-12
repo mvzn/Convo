@@ -47,6 +47,7 @@ target_sources(Convo PRIVATE
     Source/PluginEditor.cpp
     Source/IRLibrary.cpp
     Source/ConvolutionEngine.cpp
+    Source/ConvoLookAndFeel.cpp
 )
 
 target_compile_definitions(Convo PRIVATE
