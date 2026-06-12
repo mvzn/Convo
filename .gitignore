@@ -1,0 +1,16 @@
+# Build output (JUCE is fetched into here too)
+/build/
+**/cmake-build-*/
+
+# IDE / editor
+.vscode/
+.idea/
+*.user
+*.swp
+
+# OS
+.DS_Store
+
+# JUCE / CMake generated
+JuceLibraryCode/
+*_artefacts/
