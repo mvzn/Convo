@@ -6,6 +6,13 @@
 
 #include <memory>
 
+/**
+    Convo's editor. All chrome that never changes between frames (panels, captions,
+    title, meter wells) is rendered once into a cached image on resize; the waveform
+    is rendered into its own cached image only when the bake changes. paint() then
+    just blits and draws the few dynamic bits, and the 30 Hz timer repaints nothing
+    unless a meter value actually moved — the editor idles at ~zero paint cost.
+*/
 class ConvoAudioProcessorEditor : public juce::AudioProcessorEditor,
                                   public juce::FileDragAndDropTarget,
                                   public juce::ChangeListener,
@@ -31,7 +38,11 @@ private:
     void openFileChooser();
     void loadFile (const juce::File& file);
     void rebuildThumbnail();
-    void drawMeter (juce::Graphics&, juce::Rectangle<int> zone, float level, const juce::String& label);
+
+    void renderBackground();           // static chrome -> backgroundImage
+    void renderWaveImage();            // baked-IR waveform -> waveImage
+    void drawMeterFill (juce::Graphics&, juce::Rectangle<int> zone, float level, float peak);
+    float uiScale() const;             // physical px per logical px, for crisp caches
 
     ConvoAudioProcessor& processor;
 
@@ -46,6 +57,7 @@ private:
     juce::String              lastFileName;
     int                       lastBakeGen = -1;
     bool                      fileOver = false;
+    double                    bakedLenSeconds = 0.0;
 
     // parameter controls
     juce::Slider drySlider, wetSlider, outputSlider, toneSlider, preDelaySlider, widthSlider,
@@ -60,13 +72,20 @@ private:
                                       duckAtt, duckRelAtt, fadeInAtt, decayAtt, taperAtt;
     std::unique_ptr<ButtonAttachment> reverseAtt, bypassAtt;
 
-    // meters
+    // meters: shown values + slower-decaying peak-hold lines, with last-painted
+    // copies so the timer can skip repaints when nothing moved
     float inMeter = 0.0f, outMeter = 0.0f;
+    float inPeak  = 0.0f, outPeak  = 0.0f;
+    float inShown = -1.0f, outShown = -1.0f, inPeakShown = -1.0f, outPeakShown = -1.0f;
 
     std::unique_ptr<juce::FileChooser> chooser;
 
+    // cached chrome (rendered at physical resolution for HiDPI crispness)
+    juce::Image backgroundImage, waveImage;
+
     // layout regions (used by paint)
-    juce::Rectangle<int> dropZone, waveZone, inMeterZone, outMeterZone;
+    juce::Rectangle<int> headerZone, dropZone, waveZone, inMeterZone, outMeterZone,
+                         signalPanel, duckPanel, shapePanel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessorEditor)
 };

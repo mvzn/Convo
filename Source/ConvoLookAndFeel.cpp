@@ -35,7 +35,9 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
     auto angle    = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
     auto bodyR    = arcR - lineW * 1.3f;
 
-    // knob body (gunmetal) with a faint top highlight
+    // knob body (gunmetal) with a faint top highlight and grounding shadow ring
+    g.setColour (Colours::black.withAlpha (0.35f));
+    g.fillEllipse (centre.x - bodyR - 1.5f, centre.y - bodyR - 0.5f, bodyR * 2.0f + 3.0f, bodyR * 2.0f + 3.0f);
     g.setColour (ConvoColours::knobBody);
     g.fillEllipse (centre.x - bodyR, centre.y - bodyR, bodyR * 2.0f, bodyR * 2.0f);
     g.setGradientFill (ColourGradient (ConvoColours::gunmetalHi.withAlpha (0.35f), centre.x, centre.y - bodyR,
@@ -60,12 +62,15 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
         g.strokePath (value, PathStrokeType (lineW, PathStrokeType::curved, PathStrokeType::rounded));
     }
 
-    // indicator dot
-    Point<float> thumb (centre.x + bodyR * std::cos (angle - MathConstants<float>::halfPi),
-                        centre.y + bodyR * std::sin (angle - MathConstants<float>::halfPi));
+    // pointer: a line from mid-body to the rim, capped with a dot
+    const auto dir = Point<float> (std::cos (angle - MathConstants<float>::halfPi),
+                                   std::sin (angle - MathConstants<float>::halfPi));
+    const auto inner = centre + dir * (bodyR * 0.45f);
+    const auto outer = centre + dir * (bodyR * 0.92f);
     g.setColour (ConvoColours::mint);
-    const float dot = lineW * 0.9f;
-    g.fillEllipse (Rectangle<float> (dot, dot).withCentre (thumb));
+    g.drawLine ({ inner, outer }, jmax (2.0f, lineW * 0.6f));
+    const float dot = lineW * 0.95f;
+    g.fillEllipse (Rectangle<float> (dot, dot).withCentre (outer));
 }
 
 void ConvoLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button,
