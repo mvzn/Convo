@@ -2,6 +2,8 @@
 
 #include <JuceHeader.h>
 
+#include <atomic>
+
 /** Shaping applied to the raw IR before it becomes the convolution kernel.
     All of these are "bake" controls — changing one re-windows the IR on the
     message thread; none of them touch the audio thread directly. */
@@ -28,14 +30,26 @@ struct IRBakeParams
     Owns two persistent juce::dsp::Convolution engines and switches between them
     adaptively based on IR length:
 
-      - short IRs (< kThresholdSeconds)  -> zero-latency engine   (Latency{0})
-      - long  IRs (>= kThresholdSeconds) -> low-CPU engine        (Latency{kLongLatency})
+      - short IRs (< kThresholdSeconds)  -> zero-latency engine
+      - long  IRs (>= kThresholdSeconds) -> low-CPU engine (head latency depends on
+        both kLongLatency and the host block size — see longEngineLatencyForBlockSize()).
 
-    The engine (and therefore the reported latency) is chosen only when a NEW raw IR
-    is loaded; re-baking with new shaping params reloads the kernel into whichever
-    engine is already active, so latency never changes mid-session from a knob.
+    juce::dsp::Convolution loads kernels ASYNCHRONOUSLY (a background thread builds
+    the FFT segments, the audio thread installs them mid-process). Reloading the
+    already-audible engine is therefore seamless — JUCE crossfades old -> new kernel
+    internally. But switching engines (or the very first load into a virgin engine)
+    would briefly route audio through a unit-impulse kernel, i.e. raw pass-through.
 
-    All loadIR / rebake calls are MESSAGE THREAD (they allocate + window the IR).
+    To avoid that, engine switches go through a warm-up transition:
+      1. the message thread loads the kernel into the target engine and publishes a
+         transition request (target index + expected kernel size);
+      2. the audio thread keeps outputting the OLD engine (or silence if nothing was
+         ever live) while also feeding the target engine into a scratch buffer;
+      3. once the target reports the expected kernel size, it settles through JUCE's
+         internal crossfade window, then the output crossfades old -> new and the
+         target becomes active.
+
+    loadIR / rebake are MESSAGE THREAD (they allocate + window the IR).
     process() is the only audio-thread method.
 */
 class ConvolutionEngine
@@ -46,39 +60,93 @@ public:
     void prepare (const juce::dsp::ProcessSpec& spec);
     void reset();
 
-    /** A new raw IR was loaded: pick the engine by length, bake, and load.
-        Returns the reported latency in samples (0 or kLongLatency).
-        `outBaked` receives the windowed IR for display. */
+    /** A new raw IR was loaded: pick the engine by length, bake, load, and (if the
+        engine choice changed) start a warm-up transition. Returns the latency in
+        samples of the engine that will be audible. `outBaked` receives the windowed
+        IR for display. */
     int loadIR (const juce::AudioBuffer<float>& raw, double irSampleRate,
                 const IRBakeParams& bake, juce::AudioBuffer<float>& outBaked);
 
     /** A bake param changed: re-window the same raw IR and reload it into the
-        currently-active engine. Latency is unchanged. */
+        audible (or transitioning-to) engine. Latency is unchanged. */
     void rebake (const juce::AudioBuffer<float>& raw, double irSampleRate,
                  const IRBakeParams& bake, juce::AudioBuffer<float>& outBaked);
 
-    /** Audio thread: convolve `block` in place through the active engine.
-        Clears the block (wet silence) when no IR is loaded. */
+    /** Audio thread: convolve `block` in place through the active engine, running
+        any pending warm-up transition. Clears the block (wet silence) until the
+        first kernel is confirmed live. */
     void process (juce::dsp::AudioBlock<float> block);
 
+    /** Latency of the audible (or transitioning-to) engine for the prepared block
+        size. Message thread. */
     int  getLatencySamples() const noexcept { return latencySamples; }
+
+    /** True once a kernel is confirmed live on the audio thread (wet output is
+        meaningful). False on a fresh instance and during the very first load. */
     bool hasIR() const noexcept { return loaded.load(); }
 
-    static constexpr int    kLongLatency    = 512;   // samples, long-IR engine head latency
+    /** Window the raw IR into the convolution kernel: reverse -> fade-in -> decay
+        (+truncate at -60 dB) -> tail-taper. Pure function of its arguments; exposed
+        static so the bake pipeline can be unit-tested without a live convolution. */
+    static juce::AudioBuffer<float> bake (const juce::AudioBuffer<float>& raw, double irSampleRate,
+                                          const IRBakeParams& bp);
+
+    /** The real head latency of the long engine for a given host block size.
+        Mirrors juce::dsp::Convolution (8.0.6): nextPowerOfTwo (max (blockSize,
+        requested latency)). The unit test cross-checks this against the live
+        engine so a JUCE upgrade that changes the rule fails loudly. */
+    static int longEngineLatencyForBlockSize (int blockSize) noexcept
+    {
+        return juce::nextPowerOfTwo (juce::jmax (blockSize, kLongLatency));
+    }
+
+    /** Test canary only: the latency JUCE itself reports for the long engine. */
+    int getJuceReportedLongLatency() const { return longEngine.getLatency(); }
+
+    static constexpr int    kLongLatency      = 512; // requested long-engine latency, samples
     static constexpr double kThresholdSeconds = 1.5; // raw-length boundary between engines
 
 private:
-    juce::AudioBuffer<float> bake (const juce::AudioBuffer<float>& raw, double irSampleRate,
-                                   const IRBakeParams& bp) const;
-    void loadIntoActive (const juce::AudioBuffer<float>& baked, double irSampleRate);
+    juce::dsp::Convolution&       engineAt (int index)       noexcept { return index == 1 ? longEngine : shortEngine; }
+    const juce::dsp::Convolution& engineAt (int index) const noexcept { return index == 1 ? longEngine : shortEngine; }
+
+    void loadInto (int engineIndex, const juce::AudioBuffer<float>& baked, double irSampleRate);
+    int  computeLatency (int engineIndex) const noexcept;
+
+    /** Kernel size after JUCE resamples it to the engine rate (mirrors
+        juce_Convolution.cpp's resampleImpulseResponse length). */
+    static int expectedKernelSize (int bakedLen, double irSampleRate, double engineSampleRate) noexcept;
 
     juce::dsp::Convolution shortEngine { juce::dsp::Convolution::Latency { 0 } };
     juce::dsp::Convolution longEngine  { juce::dsp::Convolution::Latency { kLongLatency } };
 
-    std::atomic<int>  active { 0 };       // 0 = short engine, 1 = long engine (audio thread reads)
-    std::atomic<bool> loaded { false };
-    int    latencySamples = 0;            // message thread
+    // --- message-thread bookkeeping ---
+    int    targetEngine   = 0;                 // engine that is (or will become) audible
+    bool   engineUsed[2]  = { false, false };  // has each engine ever received a kernel?
+    bool   haveKernel     = false;
+    int    latencySamples = 0;
     double prepSampleRate = 48000.0;
+    int    maxBlockSize   = 0;
+
+    // --- message -> audio transition request (audio thread never writes these) ---
+    std::atomic<int> pendingTarget { -1 };     // engine index to warm up
+    std::atomic<int> pendingSize   { 0 };      // expected resampled kernel size
+    std::atomic<int> transitionGen { 0 };      // bumped to (re)arm the audio thread
+
+    // --- audio -> message state ---
+    std::atomic<int>  active { 0 };            // audible engine (audio thread flips on completion)
+    std::atomic<bool> loaded { false };        // a kernel is confirmed live
+
+    // --- audio-thread-only transition state ---
+    enum class Phase { idle, waiting, settling, fading };
+    Phase phase           = Phase::idle;
+    int   lastGenSeen     = 0;
+    int   transTarget     = -1;
+    int   settleLeft      = 0;
+    int   xfadeLeft       = 0;
+    int   settleSamples   = 0;                 // covers JUCE's internal install crossfade
+    int   xfadeSamples    = 0;                 // our old -> new output crossfade
+    juce::AudioBuffer<float> scratch;          // target engine warm-up buffer
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvolutionEngine)
 };

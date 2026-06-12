@@ -2,11 +2,9 @@
 
 IRLibrary::IRLibrary()
 {
-    formatManager.registerBasicFormats();   // WAV, AIFF, FLAC, OGG (+ platform extras)
-
-   #if JUCE_USE_MP3AUDIOFORMAT
-    formatManager.registerFormat (new juce::MP3AudioFormat(), false);
-   #endif
+    // WAV, AIFF, FLAC, OGG, and — when JUCE_USE_MP3AUDIOFORMAT is on — MP3 too,
+    // so no extra registerFormat call (it would assert as a duplicate in debug)
+    formatManager.registerBasicFormats();
 }
 
 bool IRLibrary::loadFile (const juce::File& file)
@@ -16,27 +14,35 @@ bool IRLibrary::loadFile (const juce::File& file)
     if (reader == nullptr || reader->numChannels == 0 || reader->lengthInSamples <= 0)
         return false;
 
-    const int numChannels = (int) reader->numChannels;
-    const int numSamples  = (int) reader->lengthInSamples;
+    const double sampleRate = reader->sampleRate > 0.0 ? reader->sampleRate : 44100.0;
+
+    // bound the decode BEFORE any (int) narrowing: length stays in 64-bit until
+    // it is provably within the cap
+    const juce::int64 maxSamples64  = (juce::int64) (kMaxSeconds * sampleRate);
+    const bool        willTruncate  = reader->lengthInSamples > maxSamples64;
+    const int         numSamples    = (int) juce::jmin (reader->lengthInSamples, maxSamples64);
+    const int         numChannels   = juce::jmin (2, (int) reader->numChannels);
 
     juce::AudioBuffer<float> tmp (numChannels, numSamples);
     reader->read (&tmp, 0, numSamples, 0, true, true);
 
     irBuffer     = std::move (tmp);
-    irSampleRate = reader->sampleRate > 0.0 ? reader->sampleRate : 44100.0;
+    irSampleRate = sampleRate;
     currentFile  = file;
+    truncated    = willTruncate;
     return true;
 }
 
 juce::String IRLibrary::getDisplayName() const
 {
-    return currentFile.existsAsFile() ? currentFile.getFileName()
-                                      : juce::String ("No IR loaded");
+    if (! currentFile.existsAsFile())
+        return "No IR loaded";
+
+    return truncated ? currentFile.getFileName() + " (truncated to 30 s)"
+                     : currentFile.getFileName();
 }
 
 bool IRLibrary::isSupported (const juce::File& file) const
 {
-    const auto ext = file.getFileExtension().toLowerCase();
-    return ext == ".wav"  || ext == ".aif" || ext == ".aiff"
-        || ext == ".ogg"  || ext == ".mp3" || ext == ".flac";
+    return formatManager.findFormatForFileExtension (file.getFileExtension()) != nullptr;
 }

@@ -144,7 +144,7 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
     else
     {
         g.setColour (ConvoColours::textDim);
-        g.drawText ("Drop .wav / .mp3 / .aiff / .ogg here  (or click Load IR)",
+        g.drawText ("Drop .wav / .aiff / .flac / .ogg / .mp3 here  (or click Load IR)",
                     waveZone, juce::Justification::centred);
     }
 
@@ -283,7 +283,14 @@ void ConvoAudioProcessorEditor::loadFile (const juce::File& file)
     }
     else
     {
-        fileNameLabel.setText ("Failed to load: " + file.getFileName(), juce::dontSendNotification);
+        // the previous IR (if any) is still loaded and audible — say so
+        auto msg = "Failed to load: " + file.getFileName();
+        if (processor.getIRLibrary().hasIR())
+            msg << "  (still using " << processor.getIRLibrary().getCurrentFile().getFileName() << ")";
+        fileNameLabel.setText (msg, juce::dontSendNotification);
+        // match the timer's comparison value so it doesn't instantly repaint the
+        // label back to the (unchanged) current IR name
+        lastFileName = processor.getIRLibrary().getDisplayName();
     }
 }
 

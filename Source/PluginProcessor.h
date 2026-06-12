@@ -35,7 +35,7 @@ public:
     bool acceptsMidi() const override { return false; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 10.0; }
+    double getTailLengthSeconds() const override { return juce::jmax (1.0, (double) tailSeconds.load()); }
 
     juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParameter; }
 
@@ -96,10 +96,12 @@ private:
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>   dryDelayLine  { 1 };
 
     // smoothed gains / controls (audio thread)
-    juce::SmoothedValue<float> dryGainSm, wetGainSm, outputGainSm, toneSm, widthSm, duckSm, bypassSm, loadFade;
+    juce::SmoothedValue<float> dryGainSm, wetGainSm, outputGainSm, toneSm, widthSm, duckSm, bypassSm, loadFade,
+                               noIrSm;               // no-IR auto-bypass: dry at unity while nothing is live
 
     double currentSampleRate = 48000.0;
     int    maxPreDelaySamples = 1;
+    int    maxDryDelaySamples = 1;
     int    currentDryDelay = -1;
     float  duckEnv = 0.0f;
 
@@ -108,9 +110,17 @@ private:
     std::atomic<int>   bakeGeneration  { 0 };
     std::atomic<float> inputLevel  { 0.0f };
     std::atomic<float> outputLevel { 0.0f };
+    std::atomic<float> tailSeconds { 0.0f };         // baked IR length + max pre-delay
+
+    // setStateInformation may run off the message thread (Cubase project load);
+    // it only stashes the path here and the timer performs the actual load.
+    juce::CriticalSection pendingIRPathLock;
+    juce::String          pendingIRPath;
+    std::atomic<bool>     pendingIRLoad { false };
 
     // message-thread bake bookkeeping
     IRBakeParams lastBaked;
+    IRBakeParams lastSeenBakeParams;                 // debounce: rebake only once values settle
     juce::AudioBuffer<float> bakedIR;
     double bakedIRSampleRate = 48000.0;
 
