@@ -170,6 +170,85 @@ void test_engine_selection()
 }
 
 // =========================================================================
+// loadIR — real latency tracks the host block size  (archetype: latency)
+// juce::dsp::Convolution's non-zero-latency engine actually reports
+// nextPowerOfTwo (max (blockSize, requested)); Convo must publish that, not
+// the requested constant. The canary cross-checks our mirrored formula
+// against the live JUCE engine so a JUCE upgrade can't silently break it.
+// =========================================================================
+void test_engine_latency_tracks_blocksize()
+{
+    std::printf ("\n== engine latency vs block size ==\n");
+    ConvolutionEngine eng;
+    juce::dsp::ProcessSpec spec { kFs, 2048, 1 };
+    eng.prepare (spec);
+
+    expectTrue (ConvolutionEngine::longEngineLatencyForBlockSize (2048) == 2048,
+                "formula: block 2048 -> latency 2048");
+    expectTrue (ConvolutionEngine::longEngineLatencyForBlockSize (768) == 1024,
+                "formula: block 768 -> latency 1024 (next pow2)");
+    expectTrue (ConvolutionEngine::longEngineLatencyForBlockSize (128) == 512,
+                "formula: small blocks -> requested 512");
+
+    expectTrue (eng.getJuceReportedLongLatency() == 2048,
+                "canary: JUCE engine agrees with the mirrored formula @ 2048");
+
+    auto bp = plainBake();
+    juce::AudioBuffer<float> baked;
+    auto ir = dcBuffer ((int) std::round (2.0 * kFs), 1.0f);
+    expectTrue (eng.loadIR (ir, kFs, bp, baked) == 2048,
+                "2.0 s IR @ block 2048 -> published latency 2048");
+}
+
+// =========================================================================
+// process() — warm-up transition: no pass-through leak  (archetype: state machine)
+// The async kernel build means a freshly-targeted engine briefly holds JUCE's
+// unit-impulse (pass-through) kernel. The transition must keep that inaudible:
+// with a 0.5-scaled delta IR and DC input, any leak would read 1.0 while the
+// legitimate wet output reads 0.5.
+// =========================================================================
+void test_transition_no_passthrough()
+{
+    std::printf ("\n== transition: no pass-through leak ==\n");
+    ConvolutionEngine eng;
+    constexpr int blockLen = 512;
+    juce::dsp::ProcessSpec spec { kFs, blockLen, 1 };
+    eng.prepare (spec);
+
+    expectTrue (! eng.hasIR(), "fresh engine reports no IR");
+
+    juce::AudioBuffer<float> ir (1, (int) (0.25 * kFs));
+    ir.clear();
+    ir.setSample (0, 0, 0.5f);                       // half-gain delta
+    auto bp = plainBake();
+    juce::AudioBuffer<float> baked;
+    eng.loadIR (ir, kFs, bp, baked);
+
+    juce::AudioBuffer<float> buf (1, blockLen);
+    float maxAbs = 0.0f, lastBlockMax = 0.0f;
+    bool wentLive = false;
+
+    // pump up to ~6 s of blocks; the background build + settle + crossfade
+    // completes in well under a second on any machine
+    for (int blk = 0; blk < 560 && ! (wentLive && lastBlockMax > 0.45f); ++blk)
+    {
+        for (int i = 0; i < blockLen; ++i) buf.setSample (0, i, 1.0f);   // DC input
+        juce::dsp::AudioBlock<float> block (buf);
+        eng.process (block);
+
+        lastBlockMax = buf.getMagnitude (0, 0, blockLen);
+        maxAbs = juce::jmax (maxAbs, lastBlockMax);
+        wentLive = wentLive || eng.hasIR();
+        juce::Thread::sleep (2);
+    }
+
+    expectTrue (wentLive, "transition completed (hasIR true)");
+    // because: a dirac leak outputs 1.0; legit wet is 0.5; crossfade stays within
+    expectTrue (maxAbs < 0.55f, "no pass-through leak during warm-up (max < 0.55)");
+    expectNear (lastBlockMax, 0.5, 0.02, "steady-state wet = 0.5 (kernel live)");
+}
+
+// =========================================================================
 // process() — silence when no IR loaded  (archetype: state guard)
 // =========================================================================
 void test_process_silence_unloaded()
@@ -258,6 +337,8 @@ void test_ms_width()
 
 // -------------------------------------------------------------------------
 // IRLibrary::isSupported  (archetype: pure identity / branches)
+// isSupported is now derived from the registered decoders, so .mp3 acceptance
+// follows JUCE_USE_MP3AUDIOFORMAT instead of being hard-coded.
 // -------------------------------------------------------------------------
 void test_issupported()
 {
@@ -267,9 +348,63 @@ void test_issupported()
     expectTrue ( lib.isSupported (juce::File ("/x/a.WAV")),  ".WAV supported (case-insensitive)");
     expectTrue ( lib.isSupported (juce::File ("/x/a.aiff")), ".aiff supported");
     expectTrue ( lib.isSupported (juce::File ("/x/a.flac")), ".flac supported");
-    expectTrue ( lib.isSupported (juce::File ("/x/a.mp3")),  ".mp3 supported");
+   #if JUCE_USE_MP3AUDIOFORMAT
+    expectTrue ( lib.isSupported (juce::File ("/x/a.mp3")),  ".mp3 supported (decoder registered)");
+   #else
+    expectTrue (!lib.isSupported (juce::File ("/x/a.mp3")),  ".mp3 rejected (no decoder in this build)");
+   #endif
     expectTrue (!lib.isSupported (juce::File ("/x/a.txt")),  ".txt rejected");
     expectTrue (!lib.isSupported (juce::File ("/x/a.png")),  ".png rejected");
+}
+
+// -------------------------------------------------------------------------
+// IRLibrary decode cap  (archetype: resource bound / state)
+// -------------------------------------------------------------------------
+juce::File writeTestWav (const juce::String& name, int numChannels, double sampleRate, int numSamples)
+{
+    auto file = juce::File::getSpecialLocation (juce::File::tempDirectory).getChildFile (name);
+    file.deleteFile();
+
+    juce::WavAudioFormat wav;
+    auto* stream = new juce::FileOutputStream (file);
+    std::unique_ptr<juce::AudioFormatWriter> writer (
+        wav.createWriterFor (stream, sampleRate, (unsigned int) numChannels, 16, {}, 0));
+    if (writer == nullptr) { delete stream; return {}; }
+
+    juce::AudioBuffer<float> buf (numChannels, numSamples);
+    for (int ch = 0; ch < numChannels; ++ch)
+        for (int i = 0; i < numSamples; ++i)
+            buf.setSample (ch, i, 0.25f);
+    writer->writeFromAudioSampleBuffer (buf, 0, numSamples);
+    return file;
+}
+
+void test_irlibrary_cap()
+{
+    std::printf ("\n== IRLibrary: decode cap ==\n");
+    constexpr double sr = 8000.0;   // small rate keeps the test file tiny
+
+    // 35 s file -> truncated to kMaxSeconds (30 s)
+    const auto longFile = writeTestWav ("convo_test_35s.wav", 1, sr, (int) (35.0 * sr));
+    IRLibrary lib;
+    expectTrue (longFile.existsAsFile() && lib.loadFile (longFile), "35 s wav loads");
+    expectTrue (lib.getIR().getNumSamples() == (int) (IRLibrary::kMaxSeconds * sr),
+                "decode stops at kMaxSeconds (30 s)");
+    expectTrue (lib.wasTruncated(), "truncation is flagged");
+    expectTrue (lib.getDisplayName().contains ("truncated"), "display name mentions truncation");
+
+    // short file -> untouched, not flagged
+    const auto shortFile = writeTestWav ("convo_test_1s.wav", 1, sr, (int) sr);
+    expectTrue (lib.loadFile (shortFile), "1 s wav loads");
+    expectTrue (lib.getIR().getNumSamples() == (int) sr, "short file keeps full length");
+    expectTrue (! lib.wasTruncated(), "no truncation flag on short file");
+
+    // 4-channel file -> clamped to the 2 channels the convolution can use
+    const auto multiFile = writeTestWav ("convo_test_4ch.wav", 4, sr, (int) sr);
+    expectTrue (lib.loadFile (multiFile), "4-channel wav loads");
+    expectTrue (lib.getIR().getNumChannels() == 2, "channels clamped to 2");
+
+    longFile.deleteFile(); shortFile.deleteFile(); multiFile.deleteFile();
 }
 
 // -------------------------------------------------------------------------
@@ -320,10 +455,13 @@ int main()
     test_bake_taper_declick();
     test_bake_decayoff_length();
     test_engine_selection();
+    test_engine_latency_tracks_blocksize();
+    test_transition_no_passthrough();
     test_process_silence_unloaded();
     test_tilt_response();
     test_ms_width();
     test_issupported();
+    test_irlibrary_cap();
     test_conv_nan_smoke();
 
     std::printf ("\n====================\n%d passed, %d failed\n", gPasses, gFails);

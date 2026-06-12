@@ -40,7 +40,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     // --- real-time signal controls ---
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "dry", 1 }, "Dry",
-        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), 0.0f, "dB"));
+        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -60.0f, "dB"));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "wet", 1 }, "Wet",
@@ -110,18 +110,21 @@ bool ConvoAudioProcessor::isBusesLayoutSupported (const BusesLayout& layouts) co
 void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 {
     currentSampleRate = sampleRate;
+    const int maxSamples = juce::jmax (1, samplesPerBlock);
 
     juce::dsp::ProcessSpec spec;
     spec.sampleRate       = sampleRate;
-    spec.maximumBlockSize = (juce::uint32) juce::jmax (1, samplesPerBlock);
+    spec.maximumBlockSize = (juce::uint32) maxSamples;
     spec.numChannels      = (juce::uint32) juce::jmax (1, getMainBusNumOutputChannels());
 
     convolution.prepare (spec);
 
     lowShelf.prepare (spec);
     highShelf.prepare (spec);
-    *lowShelf.state  = *juce::dsp::IIR::Coefficients<float>::makeLowShelf  (sampleRate, 700.0f, 0.5f, 1.0f);
-    *highShelf.state = *juce::dsp::IIR::Coefficients<float>::makeHighShelf (sampleRate, 700.0f, 0.5f, 1.0f);
+    // ArrayCoefficients assignment so the coefficient arrays get their final capacity
+    // here; the per-block updates in processBlock then never allocate
+    *lowShelf.state  = juce::dsp::IIR::ArrayCoefficients<float>::makeLowShelf  (sampleRate, 700.0f, 0.5f, 1.0f);
+    *highShelf.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighShelf (sampleRate, 700.0f, 0.5f, 1.0f);
     lowShelf.reset();
     highShelf.reset();
 
@@ -130,10 +133,17 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     preDelayLine.prepare (spec);
     preDelayLine.reset();
 
-    dryDelayLine.setMaximumDelayInSamples (ConvolutionEngine::kLongLatency + 1);
+    // the long engine's real latency grows with the host block size, so the dry
+    // delay must be sized for it — and the true value is only known here
+    maxDryDelaySamples = ConvolutionEngine::longEngineLatencyForBlockSize (maxSamples);
+    dryDelayLine.setMaximumDelayInSamples (maxDryDelaySamples + 1);
     dryDelayLine.prepare (spec);
     dryDelayLine.reset();
     currentDryDelay = -1;
+
+    const int lat = convolution.getLatencySamples();
+    dryDelaySamples.store (lat);
+    setLatencySamples (lat);
 
     dryGainSm.reset    (sampleRate, 0.02);
     wetGainSm.reset    (sampleRate, 0.02);
@@ -143,6 +153,7 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     duckSm.reset       (sampleRate, 0.02);
     bypassSm.reset     (sampleRate, 0.01);
     loadFade.reset     (sampleRate, 0.015);
+    noIrSm.reset       (sampleRate, 0.05);
 
     dryGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (dryParam->load(),    -60.0f));
     wetGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (wetParam->load(),    -60.0f));
@@ -152,11 +163,12 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     duckSm.setCurrentAndTargetValue       (duckParam->load()  * 0.01f);
     bypassSm.setCurrentAndTargetValue     (bypassParam->load() > 0.5f ? 1.0f : 0.0f);
     loadFade.setCurrentAndTargetValue     (1.0f);
+    noIrSm.setCurrentAndTargetValue       (convolution.hasIR() ? 0.0f : 1.0f);
 
     duckEnv = 0.0f;
 
-    inWork.setSize  ((int) spec.numChannels, samplesPerBlock);
-    wetWork.setSize ((int) spec.numChannels, samplesPerBlock);
+    inWork.setSize  ((int) spec.numChannels, maxSamples);
+    wetWork.setSize ((int) spec.numChannels, maxSamples);
 }
 
 void ConvoAudioProcessor::releaseResources()
@@ -173,19 +185,24 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     juce::ScopedNoDenormals noDenormals;
 
     auto mainOut = getBusBuffer (buffer, false, 0);
-    const int numCh      = mainOut.getNumChannels();
-    const int numSamples = buffer.getNumSamples();
+    const int numCh = juce::jmin (mainOut.getNumChannels(), inWork.getNumChannels());
+    // clamp to the prepared size instead of growing the work buffers — an oversized
+    // block is a host-contract violation, and growing would allocate on this thread.
+    // Any trailing samples pass through untouched (in-place buffer).
+    const int numSamples = juce::jmin (buffer.getNumSamples(), inWork.getNumSamples());
     if (numCh <= 0 || numSamples <= 0)
         return;
 
-    // pending load: arm the click-masking output fade and adopt the new dry-delay length
+    // pending load: arm the click-masking output fade and adopt the new dry-delay
+    // length. The fade flag is checked first and stored first on the message thread,
+    // so a delay jump can never be observed with the mask unarmed.
     if (loadFadePending.exchange (false))
     {
         loadFade.setCurrentAndTargetValue (0.0f);
         loadFade.setTargetValue (1.0f);
     }
     {
-        const int dd = juce::jlimit (0, ConvolutionEngine::kLongLatency, dryDelaySamples.load());
+        const int dd = juce::jlimit (0, maxDryDelaySamples, dryDelaySamples.load());
         if (dd != currentDryDelay)
         {
             dryDelayLine.setDelay ((float) dd);
@@ -194,7 +211,6 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     }
 
     // --- gather the dry input ---
-    inWork.setSize (numCh, numSamples, false, false, true);
     bool haveInput = false;
     if (auto* inBus = getBus (true, 0))
     {
@@ -213,32 +229,34 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     if (! haveInput)
         inWork.clear();
 
-    // input meter (pre-delay dry)
+    // input meter (pre-delay dry): block peak with a decaying hold so the UI poll
+    // doesn't miss peaks between its 30 Hz reads
     float magIn = 0.0f;
     for (int ch = 0; ch < numCh; ++ch)
         magIn = juce::jmax (magIn, inWork.getMagnitude (ch, 0, numSamples));
-    inputLevel.store (magIn);
+    inputLevel.store (juce::jmax (magIn, inputLevel.load() * 0.85f));
 
     // --- wet = convolved copy of the input ---
-    wetWork.setSize (numCh, numSamples, false, false, true);
     for (int ch = 0; ch < numCh; ++ch)
         wetWork.copyFrom (ch, 0, inWork, ch, 0, numSamples);
-    {
-        juce::dsp::AudioBlock<float> wetBlock (wetWork);
-        convolution.process (wetBlock);
-    }
 
-    // tone (tilt): rebuild shelf coefficients once per block from the smoothed value
+    auto wetBlock = juce::dsp::AudioBlock<float> (wetWork)
+                        .getSubsetChannelBlock (0, (size_t) numCh)
+                        .getSubBlock (0, (size_t) numSamples);
+    convolution.process (wetBlock);
+
+    // tone (tilt): rebuild shelf coefficients once per block from the smoothed value.
+    // ArrayCoefficients + Coefficients::operator= reuse the existing array storage,
+    // so this is allocation-free (unlike makeLowShelf(), which news a Coefficients).
     {
         toneSm.setTargetValue (toneParam->load());
         const float tonePct = toneSm.skip (numSamples) * 0.01f;     // -1..1
         const float tiltDb  = tonePct * 12.0f;
-        *lowShelf.state  = *juce::dsp::IIR::Coefficients<float>::makeLowShelf  (
+        *lowShelf.state  = juce::dsp::IIR::ArrayCoefficients<float>::makeLowShelf  (
             currentSampleRate, 700.0f, 0.5f, juce::Decibels::decibelsToGain (-tiltDb));
-        *highShelf.state = *juce::dsp::IIR::Coefficients<float>::makeHighShelf (
+        *highShelf.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighShelf (
             currentSampleRate, 700.0f, 0.5f, juce::Decibels::decibelsToGain ( tiltDb));
 
-        juce::dsp::AudioBlock<float> wetBlock (wetWork);
         juce::dsp::ProcessContextReplacing<float> wctx (wetBlock);
         lowShelf.process (wctx);
         highShelf.process (wctx);
@@ -297,6 +315,7 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     outputGainSm.setTargetValue (juce::Decibels::decibelsToGain (outputParam->load(), -60.0f));
     duckSm.setTargetValue       (duckParam->load() * 0.01f);
     bypassSm.setTargetValue     (bypassParam->load() > 0.5f ? 1.0f : 0.0f);
+    noIrSm.setTargetValue       (convolution.hasIR() ? 0.0f : 1.0f);   // no IR -> behave like bypass
 
     const float relMs     = duckRelParam->load();
     const float relCoeff  = std::exp (-1.0f / juce::jmax (1.0f, relMs * 0.001f * (float) currentSampleRate));
@@ -315,7 +334,9 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         const float dGain = dryGainSm.getNextValue();
         const float wGain = wetGainSm.getNextValue();
         const float oGain = outputGainSm.getNextValue();
-        const float byp   = bypassSm.getNextValue();
+        // no-IR state behaves exactly like bypass: dry at unity, wet muted —
+        // a freshly inserted Convo must never silence the track
+        const float byp   = juce::jmax (bypassSm.getNextValue(), noIrSm.getNextValue());
         const float fade  = loadFade.getNextValue();
 
         const float dEff = dGain + byp * (1.0f - dGain);   // bypass -> dry unity
@@ -330,11 +351,11 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         }
     }
 
-    // output meter
+    // output meter (decaying peak hold, same as the input meter)
     float magOut = 0.0f;
     for (int ch = 0; ch < numCh; ++ch)
         magOut = juce::jmax (magOut, mainOut.getMagnitude (ch, 0, numSamples));
-    outputLevel.store (magOut);
+    outputLevel.store (juce::jmax (magOut, outputLevel.load() * 0.85f));
 }
 
 IRBakeParams ConvoAudioProcessor::currentBakeParams() const
@@ -351,17 +372,34 @@ IRBakeParams ConvoAudioProcessor::currentBakeParams() const
 
 void ConvoAudioProcessor::timerCallback()
 {
+    // state restore lands here so file IO and IR baking stay on the message thread
+    if (pendingIRLoad.exchange (false))
+    {
+        juce::String path;
+        {
+            const juce::ScopedLock l (pendingIRPathLock);
+            path.swapWith (pendingIRPath);
+        }
+        const juce::File f (path);
+        if (f.existsAsFile())
+            loadIRFile (f);
+    }
+
     if (! irLibrary.hasIR())
         return;
 
+    // debounce: rebake only once the bake params have been stable for a full tick,
+    // so dragging a knob doesn't re-window the whole IR 30 times a second
     const auto cur = currentBakeParams();
-    if (cur != lastBaked)
+    if (cur != lastBaked && cur == lastSeenBakeParams)
     {
         convolution.rebake (irLibrary.getIR(), irLibrary.getSampleRate(), cur, bakedIR);
         bakedIRSampleRate = irLibrary.getSampleRate();
         lastBaked = cur;
+        tailSeconds.store ((float) (bakedIR.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
         bakeGeneration.fetch_add (1);
     }
+    lastSeenBakeParams = cur;
 }
 
 bool ConvoAudioProcessor::loadIRFile (const juce::File& file)
@@ -372,12 +410,14 @@ bool ConvoAudioProcessor::loadIRFile (const juce::File& file)
     const auto cur = currentBakeParams();
     const int  lat = convolution.loadIR (irLibrary.getIR(), irLibrary.getSampleRate(), cur, bakedIR);
 
-    bakedIRSampleRate = irLibrary.getSampleRate();
-    lastBaked = cur;
+    bakedIRSampleRate  = irLibrary.getSampleRate();
+    lastBaked          = cur;
+    lastSeenBakeParams = cur;
+    tailSeconds.store ((float) (bakedIR.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
 
+    loadFadePending.store (true);      // arm the click mask before publishing the delay
     dryDelaySamples.store (lat);
     setLatencySamples (lat);
-    loadFadePending.store (true);
     bakeGeneration.fetch_add (1);
 
     apvts.state.setProperty ("irPath", file.getFullPathName(), nullptr);
@@ -386,9 +426,8 @@ bool ConvoAudioProcessor::loadIRFile (const juce::File& file)
 
 void ConvoAudioProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
-    if (irLibrary.getCurrentFile().existsAsFile())
-        apvts.state.setProperty ("irPath", irLibrary.getCurrentFile().getFullPathName(), nullptr);
-
+    // irPath is kept up to date by loadIRFile (message thread); don't touch the
+    // ValueTree here — hosts may call getState from a worker thread
     if (auto xml = apvts.copyState().createXml())
         copyXmlToBinary (*xml, destData);
 }
@@ -401,12 +440,16 @@ void ConvoAudioProcessor::setStateInformation (const void* data, int sizeInBytes
         {
             apvts.replaceState (juce::ValueTree::fromXml (*xml));
 
+            // hosts may call setState off the message thread; the actual decode and
+            // bake happen in timerCallback
             const auto path = apvts.state.getProperty ("irPath").toString();
             if (path.isNotEmpty())
             {
-                const juce::File f (path);
-                if (f.existsAsFile())
-                    loadIRFile (f);
+                {
+                    const juce::ScopedLock l (pendingIRPathLock);
+                    pendingIRPath = path;
+                }
+                pendingIRLoad.store (true);
             }
         }
     }
