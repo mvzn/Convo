@@ -50,7 +50,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
         ParameterID { "wet", 1 }, "Wet",
         NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -12.0f, "dB"));
 
-    // trim on the convolved (IR) signal, in series with Wet
+    // gain of the IR itself — scales the impulse convolved with the input.
+    // applied at the convolved output (identical by linearity, but real-time
+    // and avoids re-baking); distinct control from Wet, the convolved-signal mix
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "irGain", 1 }, "IR Gain",
         NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -12.0f, "dB"));
@@ -355,7 +357,7 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
         const float dGain = dryGainSm.getNextValue();
         const float wGain = wetGainSm.getNextValue();
-        const float iGain = irGainSm.getNextValue();   // IR Gain: trim on the convolved signal
+        const float iGain = irGainSm.getNextValue();   // IR Gain: gain of the IR convolved with the input
         const float oGain = outputGainSm.getNextValue();
         // no-IR state behaves exactly like bypass: dry at unity, wet muted —
         // a freshly inserted Convo must never silence the track
@@ -369,7 +371,7 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         for (int ch = 0; ch < numCh; ++ch)
         {
             const float dry = inWork.getSample (ch, i);
-            const float wet = wetWork.getSample (ch, i) * iGain;   // IR Gain trims the convolved signal
+            const float wet = wetWork.getSample (ch, i) * iGain;   // == convolving with (iGain · IR), by linearity
             float s = (dry * dEff + wet * wEff) * oEff * fade;
             if (clipGuard)
                 s = convo::softClip (s);   // transparent below the knee
