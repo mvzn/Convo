@@ -12,6 +12,7 @@ ConvoAudioProcessor::ConvoAudioProcessor()
 {
     dryParam      = apvts.getRawParameterValue ("dry");
     wetParam      = apvts.getRawParameterValue ("wet");
+    irGainParam   = apvts.getRawParameterValue ("irGain");
     outputParam   = apvts.getRawParameterValue ("output");
     toneParam     = apvts.getRawParameterValue ("tone");
     preDelayParam = apvts.getRawParameterValue ("preDelay");
@@ -43,11 +44,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     // --- real-time signal controls ---
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "dry", 1 }, "Dry",
-        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -60.0f, "dB"));
+        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -12.0f, "dB"));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "wet", 1 }, "Wet",
-        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), 0.0f, "dB"));
+        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -12.0f, "dB"));
+
+    // trim on the convolved (IR) signal, in series with Wet
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "irGain", 1 }, "IR Gain",
+        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -12.0f, "dB"));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "output", 1 }, "Output",
@@ -159,6 +165,7 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     dryGainSm.reset    (sampleRate, 0.02);
     wetGainSm.reset    (sampleRate, 0.02);
+    irGainSm.reset     (sampleRate, 0.02);
     outputGainSm.reset (sampleRate, 0.02);
     toneSm.reset       (sampleRate, 0.05);
     widthSm.reset      (sampleRate, 0.02);
@@ -169,6 +176,7 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     dryGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (dryParam->load(),    -60.0f));
     wetGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (wetParam->load(),    -60.0f));
+    irGainSm.setCurrentAndTargetValue     (juce::Decibels::decibelsToGain (irGainParam->load(), -60.0f));
     outputGainSm.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (outputParam->load(), -60.0f));
     toneSm.setCurrentAndTargetValue       (toneParam->load());
     widthSm.setCurrentAndTargetValue      (widthParam->load() * 0.01f);
@@ -324,6 +332,7 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     // --- mix: dry + ducked wet, bypass crossfade, output trim, load fade ---
     dryGainSm.setTargetValue    (juce::Decibels::decibelsToGain (dryParam->load(),    -60.0f));
     wetGainSm.setTargetValue    (juce::Decibels::decibelsToGain (wetParam->load(),    -60.0f));
+    irGainSm.setTargetValue     (juce::Decibels::decibelsToGain (irGainParam->load(), -60.0f));
     outputGainSm.setTargetValue (juce::Decibels::decibelsToGain (outputParam->load(), -60.0f));
     duckSm.setTargetValue       (duckParam->load() * 0.01f);
     bypassSm.setTargetValue     (bypassParam->load() > 0.5f ? 1.0f : 0.0f);
@@ -346,6 +355,7 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
         const float dGain = dryGainSm.getNextValue();
         const float wGain = wetGainSm.getNextValue();
+        const float iGain = irGainSm.getNextValue();   // IR Gain: trim on the convolved signal
         const float oGain = outputGainSm.getNextValue();
         // no-IR state behaves exactly like bypass: dry at unity, wet muted —
         // a freshly inserted Convo must never silence the track
@@ -359,7 +369,7 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         for (int ch = 0; ch < numCh; ++ch)
         {
             const float dry = inWork.getSample (ch, i);
-            const float wet = wetWork.getSample (ch, i);
+            const float wet = wetWork.getSample (ch, i) * iGain;   // IR Gain trims the convolved signal
             float s = (dry * dEff + wet * wEff) * oEff * fade;
             if (clipGuard)
                 s = convo::softClip (s);   // transparent below the knee

@@ -44,6 +44,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     setup (drySlider,      dryLabel,      "Dry");
     setup (wetSlider,      wetLabel,      "Wet");
+    setup (irGainSlider,   irGainLabel,   "IR Gain");
     setup (outputSlider,   outputLabel,   "Output");
     setup (toneSlider,     toneLabel,     "Tone");
     setup (preDelaySlider, preDelayLabel, "Pre-Delay");
@@ -58,8 +59,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     clipGuardButton.setColour (juce::ToggleButton::tickColourId, ConvoColours::mint);
     rawLevelButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);  // copper = "careful"
     bypassButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::copper);
-    rawLevelButton.setTooltip ("Use the IR's recorded level unscaled - dense full-scale "
-                               "audio can convolve 30 to 45 dB hot");
+    rawLevelButton.setTooltip ("Use the IR's recorded level unscaled — dense full-scale "
+                               "audio can convolve 30..45 dB hot");
     for (auto* b : { &reverseButton, &rawLevelButton, &clipGuardButton, &bypassButton })
     {
         b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
@@ -68,6 +69,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     dryAtt      = std::make_unique<SliderAttachment> (apvts, "dry",         drySlider);
     wetAtt      = std::make_unique<SliderAttachment> (apvts, "wet",         wetSlider);
+    irGainAtt   = std::make_unique<SliderAttachment> (apvts, "irGain",      irGainSlider);
     outputAtt   = std::make_unique<SliderAttachment> (apvts, "output",      outputSlider);
     toneAtt     = std::make_unique<SliderAttachment> (apvts, "tone",        toneSlider);
     preDelayAtt = std::make_unique<SliderAttachment> (apvts, "preDelay",    preDelaySlider);
@@ -372,9 +374,10 @@ void ConvoAudioProcessorEditor::resized()
 
     {
         auto row = knobArea (signalPanel);
-        const int cellW = row.getWidth() / 6;
+        const int cellW = row.getWidth() / 7;
         placeKnob (row.removeFromLeft (cellW), drySlider,      dryLabel);
         placeKnob (row.removeFromLeft (cellW), wetSlider,      wetLabel);
+        placeKnob (row.removeFromLeft (cellW), irGainSlider,   irGainLabel);
         placeKnob (row.removeFromLeft (cellW), outputSlider,   outputLabel);
         placeKnob (row.removeFromLeft (cellW), toneSlider,     toneLabel);
         placeKnob (row.removeFromLeft (cellW), preDelaySlider, preDelayLabel);

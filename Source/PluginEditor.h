@@ -60,16 +60,16 @@ private:
     double                    bakedLenSeconds = 0.0;
 
     // parameter controls
-    juce::Slider drySlider, wetSlider, outputSlider, toneSlider, preDelaySlider, widthSlider,
+    juce::Slider drySlider, wetSlider, irGainSlider, outputSlider, toneSlider, preDelaySlider, widthSlider,
                  duckSlider, duckRelSlider, fadeInSlider, decaySlider, taperSlider;
-    juce::Label  dryLabel, wetLabel, outputLabel, toneLabel, preDelayLabel, widthLabel,
+    juce::Label  dryLabel, wetLabel, irGainLabel, outputLabel, toneLabel, preDelayLabel, widthLabel,
                  duckLabel, duckRelLabel, fadeInLabel, decayLabel, taperLabel;
     juce::ToggleButton reverseButton { "Reverse" }, rawLevelButton { "Raw IR" },
                        clipGuardButton { "Clip Guard" }, bypassButton { "Bypass" };
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
-    std::unique_ptr<SliderAttachment> dryAtt, wetAtt, outputAtt, toneAtt, preDelayAtt, widthAtt,
+    std::unique_ptr<SliderAttachment> dryAtt, wetAtt, irGainAtt, outputAtt, toneAtt, preDelayAtt, widthAtt,
                                       duckAtt, duckRelAtt, fadeInAtt, decayAtt, taperAtt;
     std::unique_ptr<ButtonAttachment> reverseAtt, rawLevelAtt, clipGuardAtt, bypassAtt;
 

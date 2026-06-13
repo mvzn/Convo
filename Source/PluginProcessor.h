@@ -75,6 +75,7 @@ private:
     // raw parameter pointers
     std::atomic<float>* dryParam      = nullptr;
     std::atomic<float>* wetParam      = nullptr;
+    std::atomic<float>* irGainParam   = nullptr;
     std::atomic<float>* outputParam   = nullptr;
     std::atomic<float>* toneParam     = nullptr;
     std::atomic<float>* preDelayParam = nullptr;
@@ -98,7 +99,7 @@ private:
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>   dryDelayLine  { 1 };
 
     // smoothed gains / controls (audio thread)
-    juce::SmoothedValue<float> dryGainSm, wetGainSm, outputGainSm, toneSm, widthSm, duckSm, bypassSm, loadFade,
+    juce::SmoothedValue<float> dryGainSm, wetGainSm, irGainSm, outputGainSm, toneSm, widthSm, duckSm, bypassSm, loadFade,
                                noIrSm;               // no-IR auto-bypass: dry at unity while nothing is live
 
     double currentSampleRate = 48000.0;
