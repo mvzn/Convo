@@ -14,6 +14,8 @@ struct IRBakeParams
     bool  decayOff = true;     // true => use the IR's recorded decay unchanged
     float taperMs = 10.0f;     // raised-cosine de-click ramp at the (truncated) end
     bool  reverse = false;     // reverse the IR before windowing
+    bool  autoLevel = true;    // scale the kernel to unity energy (max-channel L2 = 1);
+                               // false = "Raw": the IR's recorded level, unscaled
 
     bool operator== (const IRBakeParams& o) const noexcept
     {
@@ -21,7 +23,8 @@ struct IRBakeParams
             && juce::approximatelyEqual (decaySeconds, o.decaySeconds)
             && decayOff == o.decayOff
             && juce::approximatelyEqual (taperMs, o.taperMs)
-            && reverse == o.reverse;
+            && reverse == o.reverse
+            && autoLevel == o.autoLevel;
     }
     bool operator!= (const IRBakeParams& o) const noexcept { return ! (*this == o); }
 };

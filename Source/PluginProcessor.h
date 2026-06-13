@@ -85,6 +85,8 @@ private:
     std::atomic<float>* decayParam    = nullptr;
     std::atomic<float>* taperParam    = nullptr;
     std::atomic<float>* reverseParam  = nullptr;
+    std::atomic<float>* rawLevelParam = nullptr;
+    std::atomic<float>* clipGuardParam = nullptr;
     std::atomic<float>* bypassParam   = nullptr;
     juce::AudioProcessorParameter* bypassParameter = nullptr;
 

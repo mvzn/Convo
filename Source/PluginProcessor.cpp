@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "SoftClip.h"
 
 #include <cmath>
 
@@ -21,6 +22,8 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     decayParam    = apvts.getRawParameterValue ("decay");
     taperParam    = apvts.getRawParameterValue ("taper");
     reverseParam  = apvts.getRawParameterValue ("reverse");
+    rawLevelParam = apvts.getRawParameterValue ("irRaw");
+    clipGuardParam = apvts.getRawParameterValue ("clipGuard");
     bypassParam   = apvts.getRawParameterValue ("bypass");
     bypassParameter = apvts.getParameter ("bypass");
 
@@ -88,6 +91,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
 
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "reverse", 1 }, "Reverse", false));
+
+    // off = auto-level (kernel scaled to unity energy); on = the IR's raw recorded
+    // level, which can convolve 30..45 dB hot on dense full-scale material
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "irRaw", 1 }, "Raw IR Level", false));
+
+    // final-output soft-clip ceiling; transparent until the signal runs hot
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "clipGuard", 1 }, "Clip Guard", true));
 
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "bypass", 1 }, "Bypass", false));
@@ -319,6 +331,7 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
     const float relMs     = duckRelParam->load();
     const float relCoeff  = std::exp (-1.0f / juce::jmax (1.0f, relMs * 0.001f * (float) currentSampleRate));
+    const bool  clipGuard = clipGuardParam->load() > 0.5f;
 
     for (int i = 0; i < numSamples; ++i)
     {
@@ -347,7 +360,10 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         {
             const float dry = inWork.getSample (ch, i);
             const float wet = wetWork.getSample (ch, i);
-            mainOut.setSample (ch, i, (dry * dEff + wet * wEff) * oEff * fade);
+            float s = (dry * dEff + wet * wEff) * oEff * fade;
+            if (clipGuard)
+                s = convo::softClip (s);   // transparent below the knee
+            mainOut.setSample (ch, i, s);
         }
     }
 
@@ -367,6 +383,7 @@ IRBakeParams ConvoAudioProcessor::currentBakeParams() const
     p.decaySeconds = dec * 0.001f;
     p.taperMs      = taperParam->load();
     p.reverse      = reverseParam->load() > 0.5f;
+    p.autoLevel    = rawLevelParam->load() < 0.5f;
     return p;
 }
 

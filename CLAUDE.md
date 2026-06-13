@@ -26,7 +26,8 @@ A simple, MIDI-free convolution audio effect: drop an impulse response and hear 
 - IR decode and baking (windowing + `loadImpulseResponse`) happen on the **message thread** only, via the timer hand-off; the audio thread never allocates.
 - Engine selection and `setLatencySamples` happen on the message thread at file-load time only.
 - Use `juce::SmoothedValue` for all audio-rate gain/param changes (dry, wet, output, tone, width, duck, bypass).
-- No IR normalization (`Convolution::Normalise::no`) — preserve recorded IR level.
+- IR level: auto-level by default (kernel scaled in `bake()` to unity energy, one gain across channels), with the "Raw IR" parameter restoring the recorded level for calibrated IRs. JUCE-side normalization stays off (`Convolution::Normalise::no`) — all level policy lives in `bake()`.
+- A defeatable soft-clip ceiling (`SoftClip.h`, transparent below −2.5 dBFS) guards the final output.
 
 ## Code Style
 - JUCE conventions: camelCase members/methods, PascalCase classes.
@@ -37,5 +38,5 @@ A simple, MIDI-free convolution audio effect: drop an impulse response and hear 
 - Don't reintroduce MIDI, ADSR, or IR transposition — those belong to Convsyn.
 - Don't put DSP logic in the editor.
 - Don't add third-party dependencies without asking.
-- Don't normalize the IR or auto-gain — the design is deliberately "honest level."
+- Don't add level policy outside `bake()`/`SoftClip.h` — auto-level and the clip guard are the only two gain-touching stages, both user-defeatable ("Raw IR" / "Clip Guard").
 - Don't let bake knobs trigger engine/latency changes — only a new file does.

@@ -9,6 +9,7 @@
 #include <JuceHeader.h>
 #include "../Source/ConvolutionEngine.h"
 #include "../Source/IRLibrary.h"
+#include "../Source/SoftClip.h"
 
 #include <cmath>
 #include <cstdio>
@@ -32,11 +33,11 @@ void expectTrue (bool cond, const char* label)
     else      { ++gFails;  std::printf ("  [FAIL] %s\n", label); }
 }
 
-IRBakeParams plainBake()   // no shaping: identity windowing
-{
+IRBakeParams plainBake()   // no shaping: identity windowing (raw level, so the
+{                          // analytic envelope tests see unscaled samples)
     IRBakeParams bp;
     bp.fadeInMs = 0.0f; bp.decayOff = true; bp.decaySeconds = 0.0f;
-    bp.taperMs = 0.0f;  bp.reverse = false;
+    bp.taperMs = 0.0f;  bp.reverse = false; bp.autoLevel = false;
     return bp;
 }
 
@@ -145,6 +146,127 @@ void test_bake_decayoff_length()
     auto out = ConvolutionEngine::bake (raw, kFs, plainBake());   // decayOff, no taper/fade
     expectTrue (out.getNumSamples() == 3000, "decayOff + no shaping keeps full length");
     expectNear (out.getSample (0, 1500), 1.0, 1e-6, "samples pass through unchanged");
+}
+
+// =========================================================================
+// bake() — auto-level  (archetype: property / level policy)
+// One gain for all channels: loudest channel lands at unit energy, stereo
+// balance is preserved, a silent kernel is left untouched.
+// =========================================================================
+double channelL2 (const juce::AudioBuffer<float>& b, int ch)
+{
+    double e = 0.0;
+    for (int i = 0; i < b.getNumSamples(); ++i)
+        e += (double) b.getSample (ch, i) * (double) b.getSample (ch, i);
+    return std::sqrt (e);
+}
+
+void test_bake_autolevel()
+{
+    std::printf ("\n== bake: auto-level ==\n");
+    auto bp = plainBake(); bp.autoLevel = true;
+
+    // stereo, ch0 twice as hot as ch1 -> ch0 lands at L2=1, ch1 at 0.5
+    juce::AudioBuffer<float> raw (2, 9600);
+    for (int i = 0; i < 9600; ++i) { raw.setSample (0, i, 0.5f); raw.setSample (1, i, 0.25f); }
+    auto out = ConvolutionEngine::bake (raw, kFs, bp);
+    expectNear (channelL2 (out, 0), 1.0, 1e-3, "loudest channel scaled to unit energy");
+    expectNear (channelL2 (out, 1), 0.5, 1e-3, "stereo balance preserved (one shared gain)");
+
+    // a true (delta-like) IR is just brought to exactly unit energy
+    juce::AudioBuffer<float> delta (1, 4800); delta.clear(); delta.setSample (0, 0, 0.8f);
+    auto outD = ConvolutionEngine::bake (delta, kFs, bp);
+    expectNear (channelL2 (outD, 0), 1.0, 1e-4, "delta IR -> unit energy");
+
+    // raw mode: untouched
+    auto rawMode = plainBake();
+    auto outR = ConvolutionEngine::bake (raw, kFs, rawMode);
+    expectNear (outR.getSample (0, 100), 0.5, 1e-6, "raw mode leaves the level alone");
+
+    // silent kernel: no gain explosion
+    juce::AudioBuffer<float> silent (1, 4800); silent.clear();
+    auto outS = ConvolutionEngine::bake (silent, kFs, bp);
+    expectNear (outS.getMagnitude (0, 0, outS.getNumSamples()), 0.0, 1e-9, "silent IR stays silent");
+}
+
+// =========================================================================
+// softClip — final-output safety ceiling  (archetype: pure function)
+// =========================================================================
+void test_softclip()
+{
+    std::printf ("\n== softClip ==\n");
+    // because: float in/out — 0.7f isn't exactly 0.7, and tanh saturates to exactly
+    // 1.0f for huge arguments, so the bounds are "never exceeds", not "never reaches"
+    expectNear (convo::softClip (0.5f),  0.5,  1e-6, "transparent below the knee (+)");
+    expectNear (convo::softClip (-0.7f), -0.7, 1e-6, "transparent below the knee (-)");
+    expectNear (convo::softClip (convo::kClipKnee + 0.001f), convo::kClipKnee + 0.001, 1e-4,
+                "C1-continuous just above the knee");
+    expectTrue (convo::softClip (200.0f) <= 1.0f && convo::softClip (200.0f) > 0.99f,
+                "huge input pinned at the 1.0 ceiling");
+    expectTrue (convo::softClip (-50.0f) >= -1.0f && convo::softClip (-50.0f) < -0.99f,
+                "negative ceiling symmetric");
+    bool monotone = true;
+    float prev = -2.0f;
+    for (float x = -2.0f; x <= 2.0f; x += 0.01f)
+    {
+        const float y = convo::softClip (x);
+        monotone = monotone && y >= convo::softClip (prev) - 1e-6f;
+        prev = x;
+    }
+    expectTrue (monotone, "monotonic across the knee");
+}
+
+// =========================================================================
+// engine + auto-level — hot dense "IR" comes out at a musical level
+// (archetype: end-to-end level policy; this is the erokia blow-out scenario)
+// =========================================================================
+void test_autolevel_tames_hot_ir()
+{
+    std::printf ("\n== auto-level: hot dense IR ==\n");
+    ConvolutionEngine eng;
+    constexpr int blockLen = 512;
+    juce::dsp::ProcessSpec spec { kFs, blockLen, 2 };
+    eng.prepare (spec);
+
+    // 1.2 s of full-scale noise as the "IR" — raw, this convolves ~+35 dB hot
+    juce::Random irRng (99);
+    juce::AudioBuffer<float> ir (2, (int) (1.2 * kFs));
+    for (int c = 0; c < 2; ++c)
+        for (int i = 0; i < ir.getNumSamples(); ++i)
+            ir.setSample (c, i, irRng.nextFloat() * 2.0f - 1.0f);
+
+    IRBakeParams bp;                       // plugin defaults: autoLevel on
+    juce::AudioBuffer<float> baked;
+    eng.loadIR (ir, kFs, bp, baked);
+
+    juce::AudioBuffer<float> buf (2, blockLen);
+    juce::Random rng (7);
+    int guard = 0;
+    while (! eng.hasIR() && guard++ < 4000)
+    {
+        buf.clear();
+        juce::dsp::AudioBlock<float> block (buf);
+        eng.process (block);
+        juce::Thread::sleep (1);
+    }
+    expectTrue (eng.hasIR(), "kernel went live");
+
+    double peak = 0.0;
+    for (int b = 0; b < (int) (2.0 * kFs / blockLen); ++b)
+    {
+        for (int c = 0; c < 2; ++c)
+            for (int i = 0; i < blockLen; ++i)
+                buf.setSample (c, i, rng.nextFloat() * 2.0f - 1.0f);
+        juce::dsp::AudioBlock<float> block (buf);
+        eng.process (block);
+        for (int c = 0; c < 2; ++c)
+            peak = juce::jmax (peak, (double) buf.getMagnitude (c, 0, blockLen));
+    }
+    // because: unit-energy kernel * 0 dBFS noise ~ 0 dB RMS wet; crest stays modest.
+    // raw level produced ~190x (+45 dB) here — anything < 4 proves the policy works.
+    expectTrue (peak > 0.1,  "wet path is alive");
+    expectTrue (peak < 4.0,  "auto-level keeps a full-scale dense IR musical (< +12 dB)");
+    std::printf ("        (wet peak with 0 dBFS noise: %.2f)\n", peak);
 }
 
 // =========================================================================
@@ -454,6 +576,9 @@ int main()
     test_bake_decay_truncation();
     test_bake_taper_declick();
     test_bake_decayoff_length();
+    test_bake_autolevel();
+    test_softclip();
+    test_autolevel_tames_hot_ir();
     test_engine_selection();
     test_engine_latency_tracks_blocksize();
     test_transition_no_passthrough();

@@ -116,6 +116,27 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
     if (lEff < n)
         out.setSize (numCh, lEff, true, true, true);
 
+    // 6. auto-level: one gain for all channels (stereo balance preserved) so the
+    //    loudest channel has unit energy. A true IR (a decaying impulse, energy ~1)
+    //    is barely touched; dense full-scale audio used as an IR — which would
+    //    otherwise convolve 30..45 dB hot — comes out at a musical level.
+    if (bp.autoLevel)
+    {
+        double maxEnergy = 0.0;
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            const float* h = out.getReadPointer (ch);
+            double e = 0.0;
+            for (int i = 0; i < out.getNumSamples(); ++i)
+                e += (double) h[i] * (double) h[i];
+            maxEnergy = juce::jmax (maxEnergy, e);
+        }
+
+        const double l2 = std::sqrt (maxEnergy);
+        if (l2 > 1.0e-6)        // leave silent kernels alone
+            out.applyGain ((float) (1.0 / l2));
+    }
+
     return out;
 }
 

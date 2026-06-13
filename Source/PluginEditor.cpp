@@ -54,9 +54,13 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setup (decaySlider,    decayLabel,    "Decay");
     setup (taperSlider,    taperLabel,    "Taper");
 
-    reverseButton.setColour (juce::ToggleButton::tickColourId, ConvoColours::mint);    // green = active
-    bypassButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);  // copper = bypassed
-    for (auto* b : { &reverseButton, &bypassButton })
+    reverseButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);    // green = active
+    clipGuardButton.setColour (juce::ToggleButton::tickColourId, ConvoColours::mint);
+    rawLevelButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);  // copper = "careful"
+    bypassButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::copper);
+    rawLevelButton.setTooltip ("Use the IR's recorded level unscaled - dense full-scale "
+                               "audio can convolve 30 to 45 dB hot");
+    for (auto* b : { &reverseButton, &rawLevelButton, &clipGuardButton, &bypassButton })
     {
         b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
         addAndMakeVisible (*b);
@@ -73,8 +77,10 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     fadeInAtt   = std::make_unique<SliderAttachment> (apvts, "fadeIn",      fadeInSlider);
     decayAtt    = std::make_unique<SliderAttachment> (apvts, "decay",       decaySlider);
     taperAtt    = std::make_unique<SliderAttachment> (apvts, "taper",       taperSlider);
-    reverseAtt  = std::make_unique<ButtonAttachment> (apvts, "reverse",     reverseButton);
-    bypassAtt   = std::make_unique<ButtonAttachment> (apvts, "bypass",      bypassButton);
+    reverseAtt   = std::make_unique<ButtonAttachment> (apvts, "reverse",   reverseButton);
+    rawLevelAtt  = std::make_unique<ButtonAttachment> (apvts, "irRaw",     rawLevelButton);
+    clipGuardAtt = std::make_unique<ButtonAttachment> (apvts, "clipGuard", clipGuardButton);
+    bypassAtt    = std::make_unique<ButtonAttachment> (apvts, "bypass",    bypassButton);
 
     lastFileName = processor.getIRLibrary().getDisplayName();
     fileNameLabel.setText (lastFileName, juce::dontSendNotification);
@@ -321,7 +327,9 @@ void ConvoAudioProcessorEditor::resized()
     auto area = getLocalBounds().reduced (14);
 
     headerZone = area.removeFromTop (42);
-    bypassButton.setBounds (headerZone.removeFromRight (96).withSizeKeepingCentre (96, 26));
+    bypassButton.setBounds (headerZone.removeFromRight (92).withSizeKeepingCentre (92, 26));
+    headerZone.removeFromRight (8);
+    clipGuardButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
     area.removeFromTop (8);
 
     auto topRow = area.removeFromTop (168);
@@ -385,7 +393,10 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (row.removeFromLeft (cellW), decaySlider,  decayLabel);
         placeKnob (row.removeFromLeft (cellW), taperSlider,  taperLabel);
         auto cell = row.removeFromLeft (cellW);
-        reverseButton.setBounds (cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 8, 110), 28));
+        auto toggles = cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 8, 110), 28 * 2 + 8);
+        reverseButton.setBounds  (toggles.removeFromTop (28));
+        toggles.removeFromTop (8);
+        rawLevelButton.setBounds (toggles.removeFromTop (28));
     }
 
     renderBackground();
