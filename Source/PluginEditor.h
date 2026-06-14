@@ -42,6 +42,7 @@ private:
     void renderBackground();           // static chrome -> backgroundImage
     void renderWaveImage();            // baked-IR waveform -> waveImage
     void drawMeterFill (juce::Graphics&, juce::Rectangle<int> zone, float level, float peak);
+    void drawFilterOverlay (juce::Graphics&);   // tone + pre-IR HP/LP curve + bass-mono marker, over the wave
     float uiScale() const;             // physical px per logical px, for crisp caches
 
     ConvoAudioProcessor& processor;
@@ -83,6 +84,11 @@ private:
     float inMeter = 0.0f, outMeter = 0.0f;
     float inPeak  = 0.0f, outPeak  = 0.0f;
     float inShown = -1.0f, outShown = -1.0f, inPeakShown = -1.0f, outPeakShown = -1.0f;
+
+    // last-seen values of the overlay params (tone / In HP / In LP / Bass Mono / M/S) so the
+    // timer can repaint the wave layer when they move — they are not bake params
+    float eqToneSeen = -1.0e9f, eqHpSeen = -1.0e9f, eqLpSeen = -1.0e9f, eqBassSeen = -1.0e9f;
+    bool  eqMsSeen = false;
 
     std::unique_ptr<juce::FileChooser> chooser;
 

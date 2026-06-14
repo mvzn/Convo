@@ -313,6 +313,66 @@ void ConvoAudioProcessorEditor::drawMeterFill (juce::Graphics& g, juce::Rectangl
     }
 }
 
+// Frequency-response overlay drawn over the IR waveform: the display width is treated
+// as a log frequency axis 20 Hz -> 20 kHz, and the curve is the net magnitude of the
+// wet path's EQ — the Tone tilt (post-conv) times the pre-IR HP/LP. A dotted vertical
+// line marks the Bass-Mono crossover (Mid/Side only). Reads live params; not baked.
+void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
+{
+    const auto zone = waveZone.toFloat();
+    if (zone.isEmpty())
+        return;
+
+    auto& apvts = processor.getAPVTS();
+    const double sr = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0;
+
+    const float tiltDb = apvts.getRawParameterValue ("tone")->load() * 0.01f * 12.0f;   // matches processBlock
+    const float hpHz   = apvts.getRawParameterValue ("inHP")->load();
+    const float lpHz   = apvts.getRawParameterValue ("inLP")->load();
+
+    // the same filters the wet path uses; their magnitudes multiply into the net curve
+    auto lo = juce::dsp::IIR::Coefficients<float>::makeLowShelf  (sr, 700.0, 0.5, juce::Decibels::decibelsToGain (-tiltDb));
+    auto hi = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, 700.0, 0.5, juce::Decibels::decibelsToGain ( tiltDb));
+    auto hp = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass (sr, (double) hpHz);
+    auto lp = juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowPass  (sr, (double) lpHz);
+
+    constexpr double fLo = 20.0, fHi = 20000.0;
+    constexpr float  dbSpan = 15.0f;                 // +/- this maps to half the zone height
+    const float halfH = zone.getHeight() * 0.5f - 4.0f;
+    const float midY  = zone.getCentreY();
+    const int   cols  = juce::jmax (2, (int) zone.getWidth());
+
+    juce::Path curve;
+    for (int i = 0; i <= cols; ++i)
+    {
+        const double t   = (double) i / (double) cols;
+        const double f   = fLo * std::pow (fHi / fLo, t);
+        const double mag = lo->getMagnitudeForFrequency (f, sr) * hi->getMagnitudeForFrequency (f, sr)
+                         * hp->getMagnitudeForFrequency (f, sr) * lp->getMagnitudeForFrequency (f, sr);
+        const float db = (float) juce::Decibels::gainToDecibels (mag, -100.0);
+        const float x  = zone.getX() + (float) t * zone.getWidth();
+        const float y  = midY - juce::jlimit (-1.0f, 1.0f, db / dbSpan) * halfH;
+        if (i == 0) curve.startNewSubPath (x, y);
+        else        curve.lineTo (x, y);
+    }
+    g.setColour (meterAmber.withAlpha (0.9f));
+    g.strokePath (curve, juce::PathStrokeType (1.5f));
+
+    // bass-mono crossover marker (Mid/Side only): below this frequency the side is removed
+    if (apvts.getRawParameterValue ("ms")->load() > 0.5f)
+    {
+        const float bass = apvts.getRawParameterValue ("msBass")->load();
+        if (bass > 21.0f)
+        {
+            const double t = std::log (bass / fLo) / std::log (fHi / fLo);
+            const float  x = zone.getX() + (float) juce::jlimit (0.0, 1.0, t) * zone.getWidth();
+            const float dashes[] = { 3.0f, 3.0f };
+            g.setColour (ConvoColours::copper.withAlpha (0.85f));
+            g.drawDashedLine ({ x, zone.getY(), x, zone.getBottom() }, dashes, 2, 1.0f);
+        }
+    }
+}
+
 void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
 {
     if (backgroundImage.isValid())
@@ -335,6 +395,8 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
                 g.drawText (juce::String (bakedLenSeconds, 2) + " s",
                             waveZone.reduced (6, 4), juce::Justification::bottomRight);
             }
+
+            drawFilterOverlay (g);   // EQ curve (tone + pre-IR HP/LP) + bass-mono marker
         }
         else
         {
@@ -506,6 +568,22 @@ void ConvoAudioProcessorEditor::timerCallback()
 
     if (processor.getBakeGeneration() != lastBakeGen)
         rebuildThumbnail();
+
+    // the EQ overlay tracks tone + pre-IR HP/LP + bass-mono, which are not bake params,
+    // so poll them and repaint the wave layer only when one actually moves
+    auto& apvts = processor.getAPVTS();
+    const float ovTone = apvts.getRawParameterValue ("tone")->load();
+    const float ovHp   = apvts.getRawParameterValue ("inHP")->load();
+    const float ovLp   = apvts.getRawParameterValue ("inLP")->load();
+    const float ovBass = apvts.getRawParameterValue ("msBass")->load();
+    const bool  ovMs   = apvts.getRawParameterValue ("ms")->load() > 0.5f;
+    if (! juce::approximatelyEqual (ovTone, eqToneSeen) || ! juce::approximatelyEqual (ovHp, eqHpSeen)
+        || ! juce::approximatelyEqual (ovLp, eqLpSeen) || ! juce::approximatelyEqual (ovBass, eqBassSeen)
+        || ovMs != eqMsSeen)
+    {
+        eqToneSeen = ovTone; eqHpSeen = ovHp; eqLpSeen = ovLp; eqBassSeen = ovBass; eqMsSeen = ovMs;
+        repaint (dropZone);
+    }
 
     // repaint a meter only when it visibly moved — an idle editor paints nothing
     auto moved = [] (float a, float b) { return std::abs (a - b) > 0.003f; };

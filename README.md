@@ -52,7 +52,7 @@ musical shaping controls.
 - **Adaptive Wet Comp (default on):** trims the wet in real time so its loudness tracks the dry
   input, holding the gain while the input is quiet so reverb tails ring out instead of pumping.
 - **Clip Guard (default on):** a soft-clip ceiling on the output that's transparent below −2.5 dBFS.
-- The IR display shows the **processed** IR, so the shaping knobs are visible in the waveform.
+- The IR display shows the **processed** IR, so the shaping knobs are visible in the waveform. Overlaid on it is the wet path's EQ response (Tone tilt + In HP/In LP) drawn as a 20 Hz–20 kHz log curve, plus a dotted vertical marker at the Bass-Mono crossover.
 
 ## Build
 
