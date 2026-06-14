@@ -24,7 +24,7 @@ IR-bake controls (recompute the windowed IR on the message thread; not automatio
 - **Reverse** — reverse the IR before windowing (reverse-reverb). On/off, default off.
 
 ## Behaviour
-- **IR loading:** drag-drop or file chooser; WAV/AIFF/FLAC/OGG/MP3. No normalization — raw IR gain preserved (`Convolution::Normalise::no`); the Output knob and the OUT meter handle level/clip.
+- **IR loading:** drag-drop or file chooser; WAV/AIFF/FLAC/OGG (MP3 deferred — see Roadmap). No normalization — raw IR gain preserved (`Convolution::Normalise::no`); the Output knob and the OUT meter handle level/clip.
 - **Adaptive convolution engine:** two persistent `juce::dsp::Convolution` engines — `Latency{0}` and `Latency{512}`. The engine is chosen at **file load** by raw IR length (< 1.5 s → zero-latency; ≥ 1.5 s → 512-sample latency), and stays fixed until the next file load. Bake knobs never change the engine or latency.
 - **Variable reported latency:** report 0 (short engine) or 512 (long engine) via `setLatencySamples`; delay the dry tap by the same amount so dry/wet stay aligned inside the plugin.
 - **IR bake pipeline (message thread, on file / reverse / fade-in / decay / taper change):** `raw → reverse? → fade-in → decay (×exp, truncate @ −60 dB) → tail-taper → loadImpulseResponse`. Audio thread stays a pure convolution.
@@ -34,6 +34,9 @@ IR-bake controls (recompute the windowed IR on the message thread; not automatio
 - **GUI:** the IR display shows the **processed (baked)** IR — fade-in/decay/taper/reverse are visible in the waveform, redrawn on each bake.
 - **State:** APVTS save/restore plus the IR file path; reloads the IR (and re-bakes) on session recall.
 - **Buses:** mono or stereo; input channel set must equal output. No allocations or locks on the audio thread.
+
+## Roadmap (post-first-demo)
+- **MP3 → WAV import converter:** the demo build ships without an MP3 decoder (`JUCE_USE_MP3AUDIOFORMAT` off, licensing), so MP3 is not advertised in the drop zone or file chooser. Next version: accept a dropped/chosen MP3, decode-and-convert it to WAV on load (or pull in a decoder), then feed the converted buffer to the existing IR pipeline.
 
 ## Out of Scope (for now)
 - MIDI of any kind, ADSR gating, IR transposition/pitch (those stay in Convsyn).

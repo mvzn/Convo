@@ -3,7 +3,9 @@
 IRLibrary::IRLibrary()
 {
     // WAV, AIFF, FLAC, OGG, and — when JUCE_USE_MP3AUDIOFORMAT is on — MP3 too,
-    // so no extra registerFormat call (it would assert as a duplicate in debug)
+    // so no extra registerFormat call (it would assert as a duplicate in debug).
+    // MP3 stays off in the demo build (licensing); a post-demo MP3->WAV import
+    // converter is the planned path for accepting MP3 IRs (see prd.md Roadmap).
     formatManager.registerBasicFormats();
 }
 
@@ -38,7 +40,7 @@ juce::String IRLibrary::getDisplayName() const
     if (! currentFile.existsAsFile())
         return "No IR loaded";
 
-    return truncated ? currentFile.getFileName() + " (truncated to 30 s)"
+    return truncated ? currentFile.getFileName() + " (truncated to " + juce::String ((int) kMaxSeconds) + " s)"
                      : currentFile.getFileName();
 }
 

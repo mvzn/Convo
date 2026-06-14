@@ -305,7 +305,7 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
         else
         {
             g.setColour (ConvoColours::textDim);
-            g.drawText ("Drop .wav / .aiff / .flac / .ogg / .mp3 here  (or click Load IR)",
+            g.drawText ("Drop .wav / .aiff / .flac / .ogg here  (or click Load IR)",
                         waveZone, juce::Justification::centred);
         }
 
@@ -503,7 +503,7 @@ void ConvoAudioProcessorEditor::openFileChooser()
 {
     chooser = std::make_unique<juce::FileChooser> ("Select an impulse response",
                                                    juce::File(),
-                                                   "*.wav;*.aif;*.aiff;*.ogg;*.mp3;*.flac");
+                                                   "*.wav;*.aif;*.aiff;*.ogg;*.flac");
 
     const auto chooserFlags = juce::FileBrowserComponent::openMode
                             | juce::FileBrowserComponent::canSelectFiles;

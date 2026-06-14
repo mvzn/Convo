@@ -55,7 +55,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     // and avoids re-baking); distinct control from Wet, the convolved-signal mix
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "irGain", 1 }, "IR Gain",
-        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -12.0f, "dB"));
+        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), 0.0f, "dB"));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "output", 1 }, "Output",
