@@ -25,8 +25,10 @@ musical shaping controls.
 | Fade-In | 0…1000 ms | 0 ms | Onset ramp baked into the IR |
 | Decay | 50 ms…Off | Off | Exponential decay imposed on the IR tail |
 | Tail-Taper | 0…500 ms | 10 ms | De-click ramp at the IR's end |
+| Bass Mono | 20…500 Hz | 20 Hz | Mid/Side only: high-pass the side so lows go mono (20 = off) |
 | Reverse | on/off | off | Reverse the IR (reverse-reverb) |
 | Raw IR | on/off | off | Use the IR's recorded level (disables auto-level) |
+| Filter IR | on/off | off | Apply In HP/In LP to the IR instead of the input (same sound, shown in the display) |
 | Wet Comp | on/off | on | Adaptive wet gain compensation (tracks dry loudness, tail-safe) |
 | Mid/Side | on/off | off | Convolve mid-with-mid and side-with-side (re-bakes the IR as M/S) |
 | Clip Guard | on/off | on | Soft-clip ceiling on the output (transparent below −2.5 dBFS) |
@@ -39,9 +41,11 @@ musical shaping controls.
   load a file, and the plugin reports its latency to the host accordingly.
 - **IR shaping bakes into the kernel:** Reverse, Fade-In, Decay, and Tail-Taper are applied to
   the impulse response on the message thread; the audio thread stays a pure convolution.
-- **Pre-IR filter & Mid/Side:** a 6 dB/oct high-pass and low-pass shape the signal *before* it
-  hits the IR (the dry path stays clean). Mid/Side mode re-bakes the IR as mid/side and convolves
-  mid-with-mid, side-with-side — it wants a stereo IR (a mono IR collapses to mono).
+- **Pre-IR filter, Mid/Side & Bass Mono:** a 6 dB/oct high-pass and low-pass shape the signal
+  *before* it hits the IR (the dry path stays clean); **Filter IR** instead bakes them into the
+  kernel (same sound, visible in the display). Mid/Side mode re-bakes the IR as mid/side and
+  convolves mid-with-mid, side-with-side (wants a stereo IR); **Bass Mono** high-passes the side
+  so lows below the crossover collapse to mono. Routing toggles are click-masked by the load fade.
 - **Auto-level (default):** the IR kernel is normalized to unit energy when it's baked, so very
   different IRs land at similar loudness. **Raw IR** turns this off to use the recorded level for
   calibrated IRs.
