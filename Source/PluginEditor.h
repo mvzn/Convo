@@ -41,8 +41,10 @@ private:
 
     void renderBackground();           // static chrome -> backgroundImage
     void renderWaveImage();            // baked-IR waveform -> waveImage
-    void drawMeterFill (juce::Graphics&, juce::Rectangle<int> zone, float level, float peak);
-    void drawFilterOverlay (juce::Graphics&);   // tone + pre-IR HP/LP curve + bass-mono marker, over the wave
+    void drawMeterFill (juce::Graphics&, juce::Rectangle<int> zone, float level, float peak,
+                        const juce::ColourGradient& fill);
+    void renderOverlay();              // (re)build the cached EQ curve + bass-mono marker on param/size change
+    void drawFilterOverlay (juce::Graphics&);   // stroke the cached overlay over the wave (no recompute)
     float uiScale() const;             // physical px per logical px, for crisp caches
 
     ConvoAudioProcessor& processor;
@@ -61,6 +63,7 @@ private:
     int                       lastBakeGen = -1;
     bool                      fileOver = false;
     double                    bakedLenSeconds = 0.0;
+    juce::String              bakedLenText;          // cached "N.NN s" label (no per-paint String build)
 
     // parameter controls
     juce::Slider drySlider, wetSlider, irGainSlider, outputSlider, toneSlider, inHPSlider, inLPSlider,
@@ -89,6 +92,12 @@ private:
     // timer can repaint the wave layer when they move — they are not bake params
     float eqToneSeen = -1.0e9f, eqHpSeen = -1.0e9f, eqLpSeen = -1.0e9f, eqBassSeen = -1.0e9f;
     bool  eqMsSeen = false;
+
+    // cached overlay: rebuilt only when its params/size change, then just stroked in paint
+    juce::Path eqCurvePath;
+    float      monoMarkerX = -1.0f;    // bass-mono marker x in waveZone coords; < 0 = hidden
+    juce::dsp::IIR::Coefficients<float>::Ptr eqLo, eqHi, eqHp, eqLp;  // reused -> no per-redraw alloc
+    juce::ColourGradient inMeterGrad, outMeterGrad;   // cached -> no per-frame gradient alloc
 
     std::unique_ptr<juce::FileChooser> chooser;
 

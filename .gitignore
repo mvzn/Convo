@@ -1,5 +1,5 @@
 # Build output (JUCE is fetched into here too)
-/build/
+/build*/
 **/cmake-build-*/
 
 # Test runner build artifacts
