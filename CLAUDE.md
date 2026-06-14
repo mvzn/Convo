@@ -25,9 +25,10 @@ A simple, MIDI-free convolution audio effect: drop an impulse response and hear 
 - No allocations or locks in `processBlock()` — pre-allocate in `prepareToPlay()`.
 - IR decode and baking (windowing + `loadImpulseResponse`) happen on the **message thread** only, via the timer hand-off; the audio thread never allocates.
 - Engine selection and `setLatencySamples` happen on the message thread at file-load time only.
-- Use `juce::SmoothedValue` for all audio-rate gain/param changes (dry, wet, output, tone, width, duck, bypass).
+- Use `juce::SmoothedValue` for all audio-rate gain/param changes (dry, wet, IR Gain, output, tone, width, duck, bypass, wet comp).
 - IR level: auto-level by default (kernel scaled in `bake()` to unity energy, one gain across channels), with the "Raw IR" parameter restoring the recorded level for calibrated IRs. JUCE-side normalization stays off (`Convolution::Normalise::no`) — all level policy lives in `bake()`.
 - A defeatable soft-clip ceiling (`SoftClip.h`, transparent below −2.5 dBFS) guards the final output.
+- Adaptive **Wet Comp** (default on, defeatable): a per-block RMS of dry-input vs wet, applied as a smoothed (~0.25 s) gain on the wet, clamped to ±18 dB and frozen while the input is quiet so tails ring out. Audio-thread, allocation-free.
 
 ## Code Style
 - JUCE conventions: camelCase members/methods, PascalCase classes.
@@ -38,5 +39,5 @@ A simple, MIDI-free convolution audio effect: drop an impulse response and hear 
 - Don't reintroduce MIDI, ADSR, or IR transposition — those belong to Convsyn.
 - Don't put DSP logic in the editor.
 - Don't add third-party dependencies without asking.
-- Don't add level policy outside `bake()`/`SoftClip.h` — auto-level and the clip guard are the only two gain-touching stages, both user-defeatable ("Raw IR" / "Clip Guard").
+- Keep level policy explicit and defeatable. The automatic level stages are auto-level (in `bake()`) and the clip guard (`SoftClip.h`); the adaptive Wet Comp is the only signal-dependent gain on the audio thread. All three are user-defeatable ("Raw IR" / "Clip Guard" / "Wet Comp"). Don't add new automatic level policy beyond these — the explicit user gains (Dry/Wet/IR Gain/Output) aside.
 - Don't let bake knobs trigger engine/latency changes — only a new file does.

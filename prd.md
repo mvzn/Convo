@@ -7,8 +7,9 @@
 
 ## Features
 Real-time, automatable controls (act on the live signal):
-- **Dry** — dry level. −60…+6 dB, default 0 dB (−60 = silence).
-- **Wet** — convolved level. −60…+6 dB, default 0 dB.
+- **Dry** — dry level. −60…+6 dB, default −12 dB (−60 = silence).
+- **Wet** — convolved (wet) level. −60…+6 dB, default −12 dB.
+- **IR Gain** — gain of the IR, in series with Wet (a trim on the convolved signal; equivalent by linearity to scaling the kernel, applied real-time at the output). −60…+6 dB, default 0 dB.
 - **Output** — master trim. −60…+12 dB, default 0 dB.
 - **Tone** — single-knob tilt EQ on the wet, pivot ~700 Hz. −100…+100 %, default 0 (flat); left = darker, right = brighter.
 - **Pre-Delay** — wet-only delay line, post-convolution. 0…500 ms, default 0 ms. Not reported as plugin latency.
@@ -23,14 +24,20 @@ IR-bake controls (recompute the windowed IR on the message thread; not automatio
 - **Tail-Taper** — raised-cosine ramp to zero over the last N ms before the truncation point (de-click). 0…500 ms, default 10 ms.
 - **Reverse** — reverse the IR before windowing (reverse-reverb). On/off, default off.
 
+Level & safety controls:
+- **Raw IR Level** — bake-time. Off (default) = auto-level (kernel scaled to unit energy); on = the IR's recorded level unscaled, for calibrated IRs (can convolve very hot on dense full-scale material). On/off, default off.
+- **Wet Comp** — adaptive wet gain compensation (real-time): tracks the dry-input loudness and trims the wet to match, held while the input is quiet so reverb tails ring out. On/off, default on.
+- **Clip Guard** — transparent soft-clip ceiling on the output (does nothing below ~−2.5 dBFS). On/off, default on.
+
 ## Behaviour
-- **IR loading:** drag-drop or file chooser; WAV/AIFF/FLAC/OGG (MP3 deferred — see Roadmap). No normalization — raw IR gain preserved (`Convolution::Normalise::no`); the Output knob and the OUT meter handle level/clip.
+- **IR loading:** drag-drop or file chooser; WAV/AIFF/FLAC/OGG (MP3 deferred — see Roadmap).
+- **Level policy:** all level shaping lives in `bake()` + `SoftClip.h`. JUCE-side normalization stays off (`Convolution::Normalise::no`); instead the kernel is **auto-levelled** to unit energy at bake time (defeated by **Raw IR Level**). On the audio thread, **Wet Comp** adaptively matches the wet to the dry loudness and the **Clip Guard** soft-clips the output — both defeatable.
 - **Adaptive convolution engine:** two persistent `juce::dsp::Convolution` engines — `Latency{0}` and `Latency{512}`. The engine is chosen at **file load** by raw IR length (< 1.5 s → zero-latency; ≥ 1.5 s → 512-sample latency), and stays fixed until the next file load. Bake knobs never change the engine or latency.
 - **Variable reported latency:** report 0 (short engine) or 512 (long engine) via `setLatencySamples`; delay the dry tap by the same amount so dry/wet stay aligned inside the plugin.
 - **IR bake pipeline (message thread, on file / reverse / fade-in / decay / taper change):** `raw → reverse? → fade-in → decay (×exp, truncate @ −60 dB) → tail-taper → loadImpulseResponse`. Audio thread stays a pure convolution.
-- **Wet signal chain (audio thread):** `convolution → tone (tilt) → width (M/S) → pre-delay → ducking gain × Wet`, summed with `dry × Dry`, then × Output.
+- **Wet signal chain (audio thread):** `convolution → tone (tilt) → width (M/S) → pre-delay`, then mixed as `wet × IR Gain × Wet Comp × Wet × duck`, summed with `dry × Dry`, then × Output, then the Clip Guard soft-clip.
 - **Click masking:** a short (~15 ms) output fade on every IR load masks the kernel swap, engine switch, and dry-delay jump.
-- **Metering:** IN and OUT level meters (OUT flags clipping, since there is no normalization).
+- **Metering:** IN and OUT level meters (OUT flags clipping at the ceiling).
 - **GUI:** the IR display shows the **processed (baked)** IR — fade-in/decay/taper/reverse are visible in the waveform, redrawn on each bake.
 - **State:** APVTS save/restore plus the IR file path; reloads the IR (and re-bakes) on session recall.
 - **Buses:** mono or stereo; input channel set must equal output. No allocations or locks on the audio thread.

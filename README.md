@@ -11,8 +11,9 @@ musical shaping controls.
 
 | Control | Range | Default | What it does |
 |---|---|---|---|
-| Dry | −60…+6 dB | 0 dB | Dry (unprocessed) level |
-| Wet | −60…+6 dB | 0 dB | Convolved level |
+| Dry | −60…+6 dB | −12 dB | Dry (unprocessed) level |
+| Wet | −60…+6 dB | −12 dB | Convolved (wet) level |
+| IR Gain | −60…+6 dB | 0 dB | Gain of the IR, in series with Wet |
 | Output | −60…+12 dB | 0 dB | Master output trim |
 | Tone | −100…+100 % | 0 | Tilt EQ on the wet (left darker, right brighter) |
 | Pre-Delay | 0…500 ms | 0 ms | Delays the wet only |
@@ -23,6 +24,9 @@ musical shaping controls.
 | Decay | 50 ms…Off | Off | Exponential decay imposed on the IR tail |
 | Tail-Taper | 0…500 ms | 10 ms | De-click ramp at the IR's end |
 | Reverse | on/off | off | Reverse the IR (reverse-reverb) |
+| Raw IR | on/off | off | Use the IR's recorded level (disables auto-level) |
+| Wet Comp | on/off | on | Adaptive wet gain compensation (tracks dry loudness, tail-safe) |
+| Clip Guard | on/off | on | Soft-clip ceiling on the output (transparent below −2.5 dBFS) |
 | Bypass | on/off | off | Click-free, host-wired bypass |
 
 ## How it works
@@ -32,8 +36,12 @@ musical shaping controls.
   load a file, and the plugin reports its latency to the host accordingly.
 - **IR shaping bakes into the kernel:** Reverse, Fade-In, Decay, and Tail-Taper are applied to
   the impulse response on the message thread; the audio thread stays a pure convolution.
-- **No normalization:** the IR's recorded level is preserved. Use Output and the OUT meter to
-  manage gain — the loudness is honest.
+- **Auto-level (default):** the IR kernel is normalized to unit energy when it's baked, so very
+  different IRs land at similar loudness. **Raw IR** turns this off to use the recorded level for
+  calibrated IRs.
+- **Adaptive Wet Comp (default on):** trims the wet in real time so its loudness tracks the dry
+  input, holding the gain while the input is quiet so reverb tails ring out instead of pumping.
+- **Clip Guard (default on):** a soft-clip ceiling on the output that's transparent below −2.5 dBFS.
 - The IR display shows the **processed** IR, so the shaping knobs are visible in the waveform.
 
 ## Build
