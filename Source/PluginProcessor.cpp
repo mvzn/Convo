@@ -106,7 +106,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     // --- IR-bake controls ---
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "fadeIn", 1 }, "Fade In",
-        NormalisableRange<float> (0.0f, 1000.0f, 1.0f, 0.4f), 0.0f, "ms"));
+        NormalisableRange<float> (0.0f, 10000.0f, 1.0f, 0.35f), 0.0f, "ms"));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "decay", 1 }, "Decay",

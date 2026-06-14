@@ -68,8 +68,10 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
             std::reverse (d, d + n);
         }
 
-    // 2. fade-in: raised-cosine ramp 0 -> 1 over the first fadeInSamps
-    const int fadeInSamps = juce::jlimit (0, n, (int) std::round (bp.fadeInMs * 0.001 * irSampleRate));
+    // 2. fade-in: raised-cosine ramp 0 -> 1 over the first fadeInSamps, capped at 80% of
+    //    the sample so the longest fade still leaves a fifth of the IR at full level
+    const int fadeInMax  = (int) (0.8 * (double) n);
+    const int fadeInSamps = juce::jlimit (0, fadeInMax, (int) std::round (bp.fadeInMs * 0.001 * irSampleRate));
     for (int i = 0; i < fadeInSamps; ++i)
     {
         const float x = (float) i / (float) fadeInSamps;                                   // 0..1

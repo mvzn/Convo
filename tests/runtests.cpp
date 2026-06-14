@@ -87,6 +87,22 @@ void test_bake_fadein()
 }
 
 // =========================================================================
+// bake() — fade-in capped at 80% of the sample length  (archetype: property)
+// =========================================================================
+void test_bake_fadein_cap()
+{
+    std::printf ("\n== bake: fade-in 80%% length cap ==\n");
+    auto raw = dcBuffer (2000, 1.0f);
+    auto bp  = plainBake(); bp.fadeInMs = 100000.0f;   // absurdly long -> must cap at 0.8 * n = 1600
+    auto out = ConvolutionEngine::bake (raw, kFs, bp);
+
+    expectNear (out.getSample (0, 0),    0.0, 1e-6, "fade-in still starts at 0");
+    expectNear (out.getSample (0, 800),  0.5, 2e-3, "ramp hits 0.5 at 40% (half of the 1600-samp ramp)");
+    expectNear (out.getSample (0, 1600), 1.0, 1e-6, "fade-in capped at 80% (sample at 80% is full level)");
+    expectNear (out.getSample (0, 1999), 1.0, 1e-6, "the last 20% of the IR stays at full level");
+}
+
+// =========================================================================
 // bake() — decay envelope  (archetype: time-domain analytic)
 // =========================================================================
 void test_bake_decay_envelope()
@@ -703,6 +719,7 @@ int main()
 
     test_bake_reverse();
     test_bake_fadein();
+    test_bake_fadein_cap();
     test_bake_decay_envelope();
     test_bake_decay_truncation();
     test_bake_taper_declick();

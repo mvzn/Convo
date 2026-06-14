@@ -22,7 +22,7 @@ musical shaping controls.
 | Width | 0…200 % | 100 % | M/S stereo width of the wet |
 | Duck | 0…100 % | 0 | Ducks the wet under the live dry envelope |
 | Duck Release | 20…1000 ms | 200 ms | Ducking recovery time |
-| Fade-In | 0…1000 ms | 0 ms | Onset ramp baked into the IR |
+| Fade-In | 0…10000 ms | 0 ms | Onset ramp baked into the IR (capped at 80% of the IR length) |
 | Decay | 50 ms…Off | Off | Exponential decay imposed on the IR tail |
 | Tail-Taper | 0…500 ms | 10 ms | De-click ramp at the IR's end |
 | Bass Mono | 20…500 Hz | 20 Hz | Mid/Side only: high-pass the side so lows go mono (20 = off) |

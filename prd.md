@@ -21,7 +21,7 @@ Real-time, automatable controls (act on the live signal):
 - **Bypass** — click-free; wired to the host bypass (`getBypassParameter`).
 
 IR-bake controls (recompute the windowed IR on the message thread; not automation-grade):
-- **Fade-In** — raised-cosine onset ramp on the IR. 0…1000 ms, default 0 ms.
+- **Fade-In** — raised-cosine onset ramp on the IR. 0…10000 ms, default 0 ms; the ramp length is capped at 80% of the IR so the longest fade still leaves a fifth of the IR at full level.
 - **Decay** — exponential decay imposed on the IR tail; truncates at −60 dB. 50 ms…10 s, top = **Off** (use IR as recorded), default Off.
 - **Tail-Taper** — raised-cosine ramp to zero over the last N ms before the truncation point (de-click). 0…500 ms, default 10 ms.
 - **Reverse** — reverse the IR before windowing (reverse-reverb). On/off, default off.
