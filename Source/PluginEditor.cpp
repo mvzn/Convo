@@ -355,18 +355,19 @@ void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
         if (i == 0) curve.startNewSubPath (x, y);
         else        curve.lineTo (x, y);
     }
-    // copper (the Raw-IR accent), dim with a soft glow: two low-alpha wide passes for the
-    // halo, then a translucent main line — present but unobtrusive over the waveform
-    const auto eqCol = ConvoColours::copper;
-    g.setColour (eqCol.withAlpha (0.08f));
+    // frequency curve in the waveform's mint, keeping the soft glow: two low-alpha wide
+    // passes for the halo, then a translucent main line
+    const auto curveCol = ConvoColours::mint;
+    g.setColour (curveCol.withAlpha (0.08f));
     g.strokePath (curve, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved));
-    g.setColour (eqCol.withAlpha (0.14f));
+    g.setColour (curveCol.withAlpha (0.14f));
     g.strokePath (curve, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved));
-    g.setColour (eqCol.withAlpha (0.5f));
+    g.setColour (curveCol.withAlpha (0.5f));
     g.strokePath (curve, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved));
 
     // bass-mono crossover marker (Mid/Side only): below this frequency the side is removed,
-    // so the region to its left is mono — labelled "mono" when there's room for it
+    // so the region to its left is mono. Copper (the Raw-IR accent), glowing, at the curve's
+    // opacity; labelled "mono" when there's room.
     if (apvts.getRawParameterValue ("ms")->load() > 0.5f)
     {
         const float bass = apvts.getRawParameterValue ("msBass")->load();
@@ -374,12 +375,20 @@ void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
         {
             const double t = std::log (bass / fLo) / std::log (fHi / fLo);
             const float  x = zone.getX() + (float) juce::jlimit (0.0, 1.0, t) * zone.getWidth();
+            const juce::Line<float> vline (x, zone.getY(), x, zone.getBottom());
+            const auto monoCol = ConvoColours::copper;
+
+            g.setColour (monoCol.withAlpha (0.08f));   // glow halo
+            g.drawLine (vline, 5.0f);
+            g.setColour (monoCol.withAlpha (0.14f));
+            g.drawLine (vline, 3.0f);
             const float dashes[] = { 3.0f, 3.0f };
-            g.setColour (eqCol.withAlpha (0.7f));
-            g.drawDashedLine ({ x, zone.getY(), x, zone.getBottom() }, dashes, 2, 1.0f);
+            g.setColour (monoCol.withAlpha (0.5f));    // main dashed line, same opacity as the curve
+            g.drawDashedLine (vline, dashes, 2, 1.0f);
 
             if (x - zone.getX() > 34.0f)   // enough mono region to label
             {
+                g.setColour (monoCol.withAlpha (0.75f));
                 g.setFont (captionFont());
                 g.drawText ("mono", juce::Rectangle<float> (zone.getX(), zone.getBottom() - 16.0f,
                                                             x - zone.getX() - 5.0f, 14.0f),
