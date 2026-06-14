@@ -1,6 +1,7 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include "SoftClip.h"
+#include "MidSide.h"
 
 #include <cmath>
 
@@ -378,15 +379,7 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     }
     if (msEncode)
     {
-        auto* L = wetWork.getWritePointer (0);
-        auto* R = wetWork.getWritePointer (1);
-        for (int i = 0; i < numSamples; ++i)
-        {
-            const float m = 0.5f * (L[i] + R[i]);
-            const float s = 0.5f * (L[i] - R[i]);
-            L[i] = m;
-            R[i] = s;
-        }
+        convo::msEncode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
 
         // bass-mono crossover: high-pass the side so content below the cutoff collapses to
         // mono (the lows stay in the mid). 20 Hz = flat. Smoothed, first-order to match.
@@ -404,18 +397,8 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
     convolution.process (wetBlock);
 
-    if (msEncode)   // decode mid/side back to L/R: L = M + S, R = M - S
-    {
-        auto* M = wetWork.getWritePointer (0);
-        auto* S = wetWork.getWritePointer (1);
-        for (int i = 0; i < numSamples; ++i)
-        {
-            const float l = M[i] + S[i];
-            const float r = M[i] - S[i];
-            M[i] = l;
-            S[i] = r;
-        }
-    }
+    if (msEncode)   // decode mid/side back to L/R
+        convo::msDecode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
 
     // tone (tilt): rebuild shelf coefficients once per block from the smoothed value.
     // ArrayCoefficients + Coefficients::operator= reuse the existing array storage,

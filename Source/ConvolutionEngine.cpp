@@ -1,4 +1,5 @@
 #include "ConvolutionEngine.h"
+#include "MidSide.h"
 
 #include <algorithm>
 #include <cmath>
@@ -176,15 +177,7 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
             out = std::move (stereo);
         }
 
-        auto* L = out.getWritePointer (0);
-        auto* R = out.getWritePointer (1);
-        for (int i = 0; i < out.getNumSamples(); ++i)
-        {
-            const float m = 0.5f * (L[i] + R[i]);
-            const float s = 0.5f * (L[i] - R[i]);
-            L[i] = m;
-            R[i] = s;
-        }
+        convo::msEncode (out.getWritePointer (0), out.getWritePointer (1), out.getNumSamples());
     }
 
     return out;
