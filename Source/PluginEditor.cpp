@@ -27,7 +27,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setOpaque (true);                       // paint() covers everything — skip host compositing
 
     thumbnailFormatManager.registerBasicFormats();
-    thumbnail.addChangeListener (this);
+    thumbnail = std::make_unique<juce::AudioThumbnail> (512, thumbnailFormatManager, thumbnailCache);
+    thumbnail->addChangeListener (this);
 
     auto& apvts = processor.getAPVTS();
 
@@ -72,6 +73,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
                                "so tails ring out");
     inHPSlider.setTooltip ("Pre-IR high-pass (low cut), 6 dB/oct, on the signal feeding the IR");
     inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 6 dB/oct, on the signal feeding the IR");
+    fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp is capped at 80% of the IR length");
     msButton.setTooltip   ("Mid/Side: convolve mid-with-mid and side-with-side (re-bakes the "
                            "IR as M/S). Wants a stereo IR — a mono IR collapses to mono");
     msBassSlider.setTooltip ("Bass Mono (Mid/Side only): high-passes the side so content below "
@@ -128,7 +130,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 ConvoAudioProcessorEditor::~ConvoAudioProcessorEditor()
 {
     stopTimer();
-    thumbnail.removeChangeListener (this);
+    thumbnail->removeChangeListener (this);
     setLookAndFeel (nullptr);
 }
 
@@ -146,13 +148,20 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
 
     if (ir.getNumSamples() > 0 && sr > 0.0)
     {
-        thumbnail.reset (ir.getNumChannels(), sr, ir.getNumSamples());
-        thumbnail.addBlock (0, ir, 0, ir.getNumSamples());
-        bakedLenSeconds = ir.getNumSamples() / sr;
+        const int n = ir.getNumSamples();
+        // ~one thumbnail point per output pixel (1400 ≈ the display width at 2x HiDPI), so
+        // a short IR still gets enough points to draw smoothly rather than as wide bricks.
+        const int srcPerPoint = juce::jmax (1, n / 1400);
+        thumbnail->removeChangeListener (this);
+        thumbnail = std::make_unique<juce::AudioThumbnail> (srcPerPoint, thumbnailFormatManager, thumbnailCache);
+        thumbnail->addChangeListener (this);
+        thumbnail->reset (ir.getNumChannels(), sr, n);
+        thumbnail->addBlock (0, ir, 0, n);
+        bakedLenSeconds = n / sr;
     }
     else
     {
-        thumbnail.clear();
+        thumbnail->clear();
         bakedLenSeconds = 0.0;
     }
 
@@ -168,7 +177,7 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
 void ConvoAudioProcessorEditor::renderWaveImage()
 {
     waveImage = juce::Image();
-    if (waveZone.isEmpty() || thumbnail.getTotalLength() <= 0.0)
+    if (waveZone.isEmpty() || thumbnail->getTotalLength() <= 0.0)
         return;
 
     const float scale = uiScale();
@@ -183,7 +192,7 @@ void ConvoAudioProcessorEditor::renderWaveImage()
     g.setGradientFill (juce::ColourGradient (ConvoColours::mint, 0.0f, 0.0f,
                                              ConvoColours::teal.withAlpha (0.75f),
                                              0.0f, (float) local.getHeight(), false));
-    thumbnail.drawChannels (g, local, 0.0, thumbnail.getTotalLength(), 1.0f);
+    thumbnail->drawChannels (g, local, 0.0, thumbnail->getTotalLength(), 1.0f);
 }
 
 void ConvoAudioProcessorEditor::renderBackground()

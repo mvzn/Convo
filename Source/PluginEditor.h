@@ -51,7 +51,9 @@ private:
     // IR display (shows the *processed* IR)
     juce::AudioFormatManager  thumbnailFormatManager;
     juce::AudioThumbnailCache thumbnailCache { 4 };
-    juce::AudioThumbnail      thumbnail { 512, thumbnailFormatManager, thumbnailCache };
+    // rebuilt per IR with a length-adaptive resolution (see rebuildThumbnail) so short,
+    // heavily-decayed IRs don't render as a handful of wide min/max bricks
+    std::unique_ptr<juce::AudioThumbnail> thumbnail;
     juce::Label               fileNameLabel;
     juce::TextButton          loadButton { "Load IR..." };
     juce::String              lastFileName;
