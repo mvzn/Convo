@@ -57,11 +57,15 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     reverseButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);    // green = active
     clipGuardButton.setColour (juce::ToggleButton::tickColourId, ConvoColours::mint);
+    wetCompButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);
     rawLevelButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);  // copper = "careful"
     bypassButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::copper);
     rawLevelButton.setTooltip ("Use the IR's recorded level unscaled — dense full-scale "
                                "audio can convolve 30..45 dB hot");
-    for (auto* b : { &reverseButton, &rawLevelButton, &clipGuardButton, &bypassButton })
+    wetCompButton.setTooltip  ("Adaptive wet gain compensation: tracks the dry input level "
+                               "and trims the wet to match; frozen while the input is quiet "
+                               "so tails ring out");
+    for (auto* b : { &reverseButton, &rawLevelButton, &clipGuardButton, &wetCompButton, &bypassButton })
     {
         b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
         addAndMakeVisible (*b);
@@ -82,6 +86,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     reverseAtt   = std::make_unique<ButtonAttachment> (apvts, "reverse",   reverseButton);
     rawLevelAtt  = std::make_unique<ButtonAttachment> (apvts, "irRaw",     rawLevelButton);
     clipGuardAtt = std::make_unique<ButtonAttachment> (apvts, "clipGuard", clipGuardButton);
+    wetCompAtt   = std::make_unique<ButtonAttachment> (apvts, "wetComp",   wetCompButton);
     bypassAtt    = std::make_unique<ButtonAttachment> (apvts, "bypass",    bypassButton);
 
     lastFileName = processor.getIRLibrary().getDisplayName();
@@ -332,6 +337,8 @@ void ConvoAudioProcessorEditor::resized()
     bypassButton.setBounds (headerZone.removeFromRight (92).withSizeKeepingCentre (92, 26));
     headerZone.removeFromRight (8);
     clipGuardButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
+    headerZone.removeFromRight (8);
+    wetCompButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
     area.removeFromTop (8);
 
     auto topRow = area.removeFromTop (168);

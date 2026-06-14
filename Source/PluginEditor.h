@@ -65,13 +65,14 @@ private:
     juce::Label  dryLabel, wetLabel, irGainLabel, outputLabel, toneLabel, preDelayLabel, widthLabel,
                  duckLabel, duckRelLabel, fadeInLabel, decayLabel, taperLabel;
     juce::ToggleButton reverseButton { "Reverse" }, rawLevelButton { "Raw IR" },
-                       clipGuardButton { "Clip Guard" }, bypassButton { "Bypass" };
+                       clipGuardButton { "Clip Guard" }, wetCompButton { "Wet Comp" },
+                       bypassButton { "Bypass" };
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<SliderAttachment> dryAtt, wetAtt, irGainAtt, outputAtt, toneAtt, preDelayAtt, widthAtt,
                                       duckAtt, duckRelAtt, fadeInAtt, decayAtt, taperAtt;
-    std::unique_ptr<ButtonAttachment> reverseAtt, rawLevelAtt, clipGuardAtt, bypassAtt;
+    std::unique_ptr<ButtonAttachment> reverseAtt, rawLevelAtt, clipGuardAtt, wetCompAtt, bypassAtt;
 
     // meters: shown values + slower-decaying peak-hold lines, with last-painted
     // copies so the timer can skip repaints when nothing moved

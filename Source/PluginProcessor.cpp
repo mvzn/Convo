@@ -25,6 +25,7 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     reverseParam  = apvts.getRawParameterValue ("reverse");
     rawLevelParam = apvts.getRawParameterValue ("irRaw");
     clipGuardParam = apvts.getRawParameterValue ("clipGuard");
+    wetCompParam  = apvts.getRawParameterValue ("wetComp");
     bypassParam   = apvts.getRawParameterValue ("bypass");
     bypassParameter = apvts.getParameter ("bypass");
 
@@ -109,6 +110,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "clipGuard", 1 }, "Clip Guard", true));
 
+    // adaptive wet gain compensation: continuously trims the wet so its loudness
+    // tracks the dry input, held while the input is quiet so reverb tails ring out
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "wetComp", 1 }, "Wet Comp", true));
+
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "bypass", 1 }, "Bypass", false));
 
@@ -175,6 +181,7 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     bypassSm.reset     (sampleRate, 0.01);
     loadFade.reset     (sampleRate, 0.015);
     noIrSm.reset       (sampleRate, 0.05);
+    wetCompSm.reset    (sampleRate, 0.25);   // slow follower: a loudness keeper, not a compressor
 
     dryGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (dryParam->load(),    -60.0f));
     wetGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (wetParam->load(),    -60.0f));
@@ -186,8 +193,10 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     bypassSm.setCurrentAndTargetValue     (bypassParam->load() > 0.5f ? 1.0f : 0.0f);
     loadFade.setCurrentAndTargetValue     (1.0f);
     noIrSm.setCurrentAndTargetValue       (convolution.hasIR() ? 0.0f : 1.0f);
+    wetCompSm.setCurrentAndTargetValue    (1.0f);
 
-    duckEnv = 0.0f;
+    duckEnv       = 0.0f;
+    wetCompTarget = 1.0f;
 
     inWork.setSize  ((int) spec.numChannels, maxSamples);
     wetWork.setSize ((int) spec.numChannels, maxSamples);
@@ -257,6 +266,15 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     for (int ch = 0; ch < numCh; ++ch)
         magIn = juce::jmax (magIn, inWork.getMagnitude (ch, 0, numSamples));
     inputLevel.store (juce::jmax (magIn, inputLevel.load() * 0.85f));
+
+    // dry-reference loudness for adaptive wet comp, taken off the live (pre-delay) input
+    float drySumSq = 0.0f;
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        const float r = inWork.getRMSLevel (ch, 0, numSamples);
+        drySumSq += r * r;
+    }
+    const float dryRms = std::sqrt (drySumSq / (float) numCh);
 
     // --- wet = convolved copy of the input ---
     for (int ch = 0; ch < numCh; ++ch)
@@ -331,6 +349,29 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         }
     }
 
+    // wet loudness (post wet-chain, pre-gain) for adaptive wet comp
+    float wetSumSq = 0.0f;
+    for (int ch = 0; ch < numCh; ++ch)
+    {
+        const float r = wetWork.getRMSLevel (ch, 0, numSamples);
+        wetSumSq += r * r;
+    }
+    const float wetRms = std::sqrt (wetSumSq / (float) numCh);
+
+    // adaptive wet gain compensation (dry-referenced, tail-safe): chase the dry/wet
+    // ratio only while the input is live; hold it otherwise so reverb tails ring out
+    // instead of being pumped up during silence. The 0.25 s smoother does the rest.
+    if (wetCompParam->load() > 0.5f)
+    {
+        if (dryRms > 0.0018f && wetRms > 1.0e-6f)                       // gate ~ -55 dBFS RMS
+            wetCompTarget = juce::jlimit (0.125f, 8.0f, dryRms / wetRms); // clamp to +/-18 dB
+        wetCompSm.setTargetValue (wetCompTarget);
+    }
+    else
+    {
+        wetCompSm.setTargetValue (1.0f);
+    }
+
     // --- mix: dry + ducked wet, bypass crossfade, output trim, load fade ---
     dryGainSm.setTargetValue    (juce::Decibels::decibelsToGain (dryParam->load(),    -60.0f));
     wetGainSm.setTargetValue    (juce::Decibels::decibelsToGain (wetParam->load(),    -60.0f));
@@ -358,6 +399,7 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         const float dGain = dryGainSm.getNextValue();
         const float wGain = wetGainSm.getNextValue();
         const float iGain = irGainSm.getNextValue();   // IR Gain: gain of the IR convolved with the input
+        const float cGain = wetCompSm.getNextValue();   // adaptive wet gain compensation
         const float oGain = outputGainSm.getNextValue();
         // no-IR state behaves exactly like bypass: dry at unity, wet muted —
         // a freshly inserted Convo must never silence the track
@@ -371,7 +413,7 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         for (int ch = 0; ch < numCh; ++ch)
         {
             const float dry = inWork.getSample (ch, i);
-            const float wet = wetWork.getSample (ch, i) * iGain;   // == convolving with (iGain · IR), by linearity
+            const float wet = wetWork.getSample (ch, i) * iGain * cGain;   // IR Gain then wet comp
             float s = (dry * dEff + wet * wEff) * oEff * fade;
             if (clipGuard)
                 s = convo::softClip (s);   // transparent below the knee

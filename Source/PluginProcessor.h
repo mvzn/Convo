@@ -88,6 +88,7 @@ private:
     std::atomic<float>* reverseParam  = nullptr;
     std::atomic<float>* rawLevelParam = nullptr;
     std::atomic<float>* clipGuardParam = nullptr;
+    std::atomic<float>* wetCompParam  = nullptr;
     std::atomic<float>* bypassParam   = nullptr;
     juce::AudioProcessorParameter* bypassParameter = nullptr;
 
@@ -100,13 +101,15 @@ private:
 
     // smoothed gains / controls (audio thread)
     juce::SmoothedValue<float> dryGainSm, wetGainSm, irGainSm, outputGainSm, toneSm, widthSm, duckSm, bypassSm, loadFade,
-                               noIrSm;               // no-IR auto-bypass: dry at unity while nothing is live
+                               noIrSm,               // no-IR auto-bypass: dry at unity while nothing is live
+                               wetCompSm;            // adaptive wet gain compensation (dry-referenced)
 
     double currentSampleRate = 48000.0;
     int    maxPreDelaySamples = 1;
     int    maxDryDelaySamples = 1;
     int    currentDryDelay = -1;
     float  duckEnv = 0.0f;
+    float  wetCompTarget = 1.0f;   // wet-comp ratio held across blocks (frozen while input is quiet)
 
     std::atomic<int>   dryDelaySamples { 0 };        // engine latency published on load (message thread)
     std::atomic<bool>  loadFadePending { false };    // trigger the click-masking output fade
