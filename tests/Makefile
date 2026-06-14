@@ -10,6 +10,10 @@ CXX      ?= g++
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wno-unused-parameter -Wno-deprecated-declarations \
             -pthread -fvisibility=hidden
 
+# auto-generated header dependencies: editing a .h rebuilds every .o that includes it
+# (without this, changing e.g. IRBakeParams leaves stale objects with a mismatched layout)
+DEPFLAGS := -MMD -MP
+
 # Headless module set: tests/JuceHeader.h matches this exact list and is found first via -I.
 DEFS := \
     -DLINUX=1 -DNDEBUG=1 \
@@ -41,6 +45,8 @@ OBJS := \
     $(OBJDIR)/IRLibrary.o \
     $(OBJDIR)/runtests.o
 
+DEPS := $(OBJS:.o=.d)
+
 runtests: $(OBJS)
 	$(CXX) $(CXXFLAGS) $(OBJS) $(LDLIBS) -o $@
 
@@ -48,36 +54,38 @@ $(OBJDIR):
 	mkdir -p $(OBJDIR)
 
 $(OBJDIR)/runtests.o: runtests.cpp | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) $(DEFS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(DEFS) $(INCLUDES) -c $< -o $@
 
 $(OBJDIR)/ConvolutionEngine.o: ../Source/ConvolutionEngine.cpp | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) $(DEFS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(DEFS) $(INCLUDES) -c $< -o $@
 
 $(OBJDIR)/IRLibrary.o: ../Source/IRLibrary.cpp | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) $(DEFS) $(INCLUDES) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(DEFS) $(INCLUDES) -c $< -o $@
 
 $(OBJDIR)/juce_core.o: | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_core/juce_core.cpp -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_core/juce_core.cpp -o $@
 
 $(OBJDIR)/juce_events.o: | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_events/juce_events.cpp -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_events/juce_events.cpp -o $@
 
 $(OBJDIR)/juce_data_structures.o: | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_data_structures/juce_data_structures.cpp -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_data_structures/juce_data_structures.cpp -o $@
 
 $(OBJDIR)/juce_audio_basics.o: | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_audio_basics/juce_audio_basics.cpp -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_audio_basics/juce_audio_basics.cpp -o $@
 
 $(OBJDIR)/juce_audio_formats.o: | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_audio_formats/juce_audio_formats.cpp -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_audio_formats/juce_audio_formats.cpp -o $@
 
 $(OBJDIR)/juce_dsp.o: | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_dsp/juce_dsp.cpp -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_dsp/juce_dsp.cpp -o $@
 
 $(OBJDIR)/juce_core_CompilationTime.o: | $(OBJDIR)
-	$(CXX) $(CXXFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_core/juce_core_CompilationTime.cpp -o $@
+	$(CXX) $(CXXFLAGS) $(DEPFLAGS) $(DEFS) $(INCLUDES) -x c++ -c $(JUCE_MODULES)/juce_core/juce_core_CompilationTime.cpp -o $@
 
 clean:
 	rm -rf $(OBJDIR) runtests
+
+-include $(DEPS)
 
 .PHONY: clean
