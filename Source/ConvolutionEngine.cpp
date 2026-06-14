@@ -137,6 +137,30 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
             out.applyGain ((float) (1.0 / l2));
     }
 
+    // 6b. pre-IR filter baked into the kernel (when the filter targets the IR). Placed
+    //     after auto-level so the result matches runtime input-filtering by linearity
+    //     (conv is LTI: filter(in) * k == in * filter(k), and the auto-level gain is the
+    //     same either way). Same first-order Duplicator the audio thread uses at runtime.
+    if (bp.filterIR)
+    {
+        juce::dsp::ProcessSpec ks { irSampleRate,
+                                    (juce::uint32) juce::jmax (1, out.getNumSamples()),
+                                    (juce::uint32) out.getNumChannels() };
+        juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
+                                       juce::dsp::IIR::Coefficients<float>> hp, lp;
+        hp.prepare (ks);
+        lp.prepare (ks);
+        *hp.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (irSampleRate, bp.inHPHz);
+        *lp.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass  (irSampleRate, bp.inLPHz);
+        hp.reset();
+        lp.reset();
+
+        juce::dsp::AudioBlock<float> kb (out);
+        juce::dsp::ProcessContextReplacing<float> ctx (kb);
+        hp.process (ctx);
+        lp.process (ctx);
+    }
+
     // 7. mid/side encode the kernel: ch0 = mid = (L+R)/2, ch1 = side = (L-R)/2.
     //    The audio thread M/S-encodes its input the same way, so channel-wise
     //    convolution becomes mid-with-mid and side-with-side. A mono IR has no

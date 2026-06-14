@@ -18,6 +18,10 @@ struct IRBakeParams
                                // false = "Raw": the IR's recorded level, unscaled
     bool  msMode = false;      // encode the kernel to mid/side (mid=ch0, side=ch1) so the
                                // audio thread can convolve mid-with-mid, side-with-side
+    bool  filterIR = false;    // bake the pre-IR HP/LP into the kernel instead of filtering
+                               // the input at runtime (cutoffs below; only used when true)
+    float inHPHz = 20.0f;      // first-order high-pass cutoff baked into the kernel
+    float inLPHz = 20000.0f;   // first-order low-pass  cutoff baked into the kernel
 
     bool operator== (const IRBakeParams& o) const noexcept
     {
@@ -27,7 +31,12 @@ struct IRBakeParams
             && juce::approximatelyEqual (taperMs, o.taperMs)
             && reverse == o.reverse
             && autoLevel == o.autoLevel
-            && msMode == o.msMode;
+            && msMode == o.msMode
+            && filterIR == o.filterIR
+            // cutoffs only affect the bake when the filter targets the IR, so changing
+            // them in input-filter mode must not trigger a needless re-bake
+            && (! filterIR || (juce::approximatelyEqual (inHPHz, o.inHPHz)
+                            && juce::approximatelyEqual (inLPHz, o.inLPHz)));
     }
     bool operator!= (const IRBakeParams& o) const noexcept { return ! (*this == o); }
 };
