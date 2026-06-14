@@ -18,8 +18,10 @@ jobs:
     # nested CMake build (Debug, /Zi /MP) that ignores the configure-time
     # CMAKE_MSVC_DEBUG_INFORMATION_FORMAT and otherwise races on a shared vc140.pdb under
     # sccache (fatal C1041 at configure time). No-op on Linux/macOS (no cl.exe).
+    # Use the dash form -Z7 (not /Z7): Git Bash / MSYS would treat a leading-slash value
+    # as a Unix path and mangle it; cl.exe accepts the dash form.
     env:
-      _CL_: /Z7
+      _CL_: -Z7
     strategy:
       fail-fast: false
       matrix:
