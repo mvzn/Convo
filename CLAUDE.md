@@ -25,7 +25,8 @@ A simple, MIDI-free convolution audio effect: drop an impulse response and hear 
 - No allocations or locks in `processBlock()` — pre-allocate in `prepareToPlay()`.
 - IR decode and baking (windowing + `loadImpulseResponse`) happen on the **message thread** only, via the timer hand-off; the audio thread never allocates.
 - Engine selection and `setLatencySamples` happen on the message thread at file-load time only.
-- Use `juce::SmoothedValue` for all audio-rate gain/param changes (dry, wet, IR Gain, output, tone, width, duck, bypass, wet comp).
+- Use `juce::SmoothedValue` for all audio-rate gain/param changes (dry, wet, IR Gain, output, tone, width, duck, bypass, wet comp, input HP/LP cutoffs).
+- The pre-IR input filter (first-order HP/LP, 6 dB/oct) sits on the wet source before convolution; the dry tap is never filtered. Mid/Side is a bake param: `bake()` re-encodes the kernel to M/S, and the audio thread encodes/decodes M/S around the convolution only when the live kernel is M/S (published via the `msActive` atomic). Toggling Mid/Side re-bakes and is masked by the load fade.
 - IR level: auto-level by default (kernel scaled in `bake()` to unity energy, one gain across channels), with the "Raw IR" parameter restoring the recorded level for calibrated IRs. JUCE-side normalization stays off (`Convolution::Normalise::no`) — all level policy lives in `bake()`.
 - A defeatable soft-clip ceiling (`SoftClip.h`, transparent below −2.5 dBFS) guards the final output.
 - Adaptive **Wet Comp** (default on, defeatable): a per-block RMS of dry-input vs wet, applied as a smoothed (~0.25 s) gain on the wet, clamped to ±18 dB and frozen while the input is quiet so tails ring out. Audio-thread, allocation-free.

@@ -12,6 +12,8 @@ Real-time, automatable controls (act on the live signal):
 - **IR Gain** — gain of the IR, in series with Wet (a trim on the convolved signal; equivalent by linearity to scaling the kernel, applied real-time at the output). −60…+6 dB, default 0 dB.
 - **Output** — master trim. −60…+12 dB, default 0 dB.
 - **Tone** — single-knob tilt EQ on the wet, pivot ~700 Hz. −100…+100 %, default 0 (flat); left = darker, right = brighter.
+- **Input HP** — first-order high-pass (low cut) on the IR input, pre-convolution. 20…2000 Hz, default 20 Hz (flat). 6 dB/oct.
+- **Input LP** — first-order low-pass (high cut) on the IR input, pre-convolution. 200…20000 Hz, default 20000 Hz (flat). 6 dB/oct.
 - **Pre-Delay** — wet-only delay line, post-convolution. 0…500 ms, default 0 ms. Not reported as plugin latency.
 - **Width** — M/S stereo width on the wet. 0…200 %, default 100 %.
 - **Duck** — amount the wet is ducked under the live dry envelope. 0…100 %, default 0 (off).
@@ -24,8 +26,9 @@ IR-bake controls (recompute the windowed IR on the message thread; not automatio
 - **Tail-Taper** — raised-cosine ramp to zero over the last N ms before the truncation point (de-click). 0…500 ms, default 10 ms.
 - **Reverse** — reverse the IR before windowing (reverse-reverb). On/off, default off.
 
-Level & safety controls:
+Level, routing & safety controls:
 - **Raw IR Level** — bake-time. Off (default) = auto-level (kernel scaled to unit energy); on = the IR's recorded level unscaled, for calibrated IRs (can convolve very hot on dense full-scale material). On/off, default off.
+- **Mid/Side** — bake-time routing. Convolve mid-with-mid and side-with-side: re-bakes the kernel to M/S (ch0 = mid, ch1 = side) and M/S-encodes the input around the convolution. Wants a stereo IR — a mono IR has no side, so it collapses to mono. On/off, default off.
 - **Wet Comp** — adaptive wet gain compensation (real-time): tracks the dry-input loudness and trims the wet to match, held while the input is quiet so reverb tails ring out. On/off, default on.
 - **Clip Guard** — transparent soft-clip ceiling on the output (does nothing below ~−2.5 dBFS). On/off, default on.
 
@@ -34,8 +37,8 @@ Level & safety controls:
 - **Level policy:** all level shaping lives in `bake()` + `SoftClip.h`. JUCE-side normalization stays off (`Convolution::Normalise::no`); instead the kernel is **auto-levelled** to unit energy at bake time (defeated by **Raw IR Level**). On the audio thread, **Wet Comp** adaptively matches the wet to the dry loudness and the **Clip Guard** soft-clips the output — both defeatable.
 - **Adaptive convolution engine:** two persistent `juce::dsp::Convolution` engines — `Latency{0}` and `Latency{512}`. The engine is chosen at **file load** by raw IR length (< 1.5 s → zero-latency; ≥ 1.5 s → 512-sample latency), and stays fixed until the next file load. Bake knobs never change the engine or latency.
 - **Variable reported latency:** report 0 (short engine) or 512 (long engine) via `setLatencySamples`; delay the dry tap by the same amount so dry/wet stay aligned inside the plugin.
-- **IR bake pipeline (message thread, on file / reverse / fade-in / decay / taper change):** `raw → reverse? → fade-in → decay (×exp, truncate @ −60 dB) → tail-taper → loadImpulseResponse`. Audio thread stays a pure convolution.
-- **Wet signal chain (audio thread):** `convolution → tone (tilt) → width (M/S) → pre-delay`, then mixed as `wet × IR Gain × Wet Comp × Wet × duck`, summed with `dry × Dry`, then × Output, then the Clip Guard soft-clip.
+- **IR bake pipeline (message thread, on file / reverse / fade-in / decay / taper / Raw-IR / Mid-Side change):** `raw → reverse? → fade-in → decay (×exp, truncate @ −60 dB) → tail-taper → auto-level? → M/S encode? → loadImpulseResponse`. Audio thread stays a pure convolution. A Mid-Side toggle re-bakes the kernel and is masked by the load fade.
+- **Wet signal chain (audio thread):** `input HP/LP → M/S encode? → convolution → M/S decode? → tone (tilt) → width (M/S) → pre-delay`, then mixed as `wet × IR Gain × Wet Comp × Wet × duck`, summed with `dry × Dry`, then × Output, then the Clip Guard soft-clip. The input HP/LP filters the wet source only — the dry tap is never filtered.
 - **Click masking:** a short (~15 ms) output fade on every IR load masks the kernel swap, engine switch, and dry-delay jump.
 - **Metering:** IN and OUT level meters (OUT flags clipping at the ceiling).
 - **GUI:** the IR display shows the **processed (baked)** IR — fade-in/decay/taper/reverse are visible in the waveform, redrawn on each bake.
