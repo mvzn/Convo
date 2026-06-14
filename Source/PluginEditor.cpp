@@ -47,6 +47,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setup (irGainSlider,   irGainLabel,   "IR Gain");
     setup (outputSlider,   outputLabel,   "Output");
     setup (toneSlider,     toneLabel,     "Tone");
+    setup (inHPSlider,     inHPLabel,     "In HP");
+    setup (inLPSlider,     inLPLabel,     "In LP");
     setup (preDelaySlider, preDelayLabel, "Pre-Delay");
     setup (widthSlider,    widthLabel,    "Width");
     setup (duckSlider,     duckLabel,     "Duck");
@@ -58,6 +60,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     reverseButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);    // green = active
     clipGuardButton.setColour (juce::ToggleButton::tickColourId, ConvoColours::mint);
     wetCompButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);
+    msButton.setColour        (juce::ToggleButton::tickColourId, ConvoColours::mint);
     rawLevelButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);  // copper = "careful"
     bypassButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::copper);
     rawLevelButton.setTooltip ("Use the IR's recorded level unscaled — dense full-scale "
@@ -65,7 +68,11 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     wetCompButton.setTooltip  ("Adaptive wet gain compensation: tracks the dry input level "
                                "and trims the wet to match; frozen while the input is quiet "
                                "so tails ring out");
-    for (auto* b : { &reverseButton, &rawLevelButton, &clipGuardButton, &wetCompButton, &bypassButton })
+    inHPSlider.setTooltip ("Pre-IR high-pass (low cut), 6 dB/oct, on the signal feeding the IR");
+    inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 6 dB/oct, on the signal feeding the IR");
+    msButton.setTooltip   ("Mid/Side: convolve mid-with-mid and side-with-side (re-bakes the "
+                           "IR as M/S). Wants a stereo IR — a mono IR collapses to mono");
+    for (auto* b : { &reverseButton, &rawLevelButton, &clipGuardButton, &wetCompButton, &msButton, &bypassButton })
     {
         b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
         addAndMakeVisible (*b);
@@ -76,6 +83,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     irGainAtt   = std::make_unique<SliderAttachment> (apvts, "irGain",      irGainSlider);
     outputAtt   = std::make_unique<SliderAttachment> (apvts, "output",      outputSlider);
     toneAtt     = std::make_unique<SliderAttachment> (apvts, "tone",        toneSlider);
+    inHPAtt     = std::make_unique<SliderAttachment> (apvts, "inHP",        inHPSlider);
+    inLPAtt     = std::make_unique<SliderAttachment> (apvts, "inLP",        inLPSlider);
     preDelayAtt = std::make_unique<SliderAttachment> (apvts, "preDelay",    preDelaySlider);
     widthAtt    = std::make_unique<SliderAttachment> (apvts, "width",       widthSlider);
     duckAtt     = std::make_unique<SliderAttachment> (apvts, "duck",        duckSlider);
@@ -87,6 +96,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     rawLevelAtt  = std::make_unique<ButtonAttachment> (apvts, "irRaw",     rawLevelButton);
     clipGuardAtt = std::make_unique<ButtonAttachment> (apvts, "clipGuard", clipGuardButton);
     wetCompAtt   = std::make_unique<ButtonAttachment> (apvts, "wetComp",   wetCompButton);
+    msAtt        = std::make_unique<ButtonAttachment> (apvts, "ms",        msButton);
     bypassAtt    = std::make_unique<ButtonAttachment> (apvts, "bypass",    bypassButton);
 
     lastFileName = processor.getIRLibrary().getDisplayName();
@@ -339,6 +349,8 @@ void ConvoAudioProcessorEditor::resized()
     clipGuardButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
     headerZone.removeFromRight (8);
     wetCompButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
+    headerZone.removeFromRight (8);
+    msButton.setBounds (headerZone.removeFromRight (104).withSizeKeepingCentre (104, 26));
     area.removeFromTop (8);
 
     auto topRow = area.removeFromTop (168);
@@ -381,12 +393,14 @@ void ConvoAudioProcessorEditor::resized()
 
     {
         auto row = knobArea (signalPanel);
-        const int cellW = row.getWidth() / 7;
+        const int cellW = row.getWidth() / 9;
         placeKnob (row.removeFromLeft (cellW), drySlider,      dryLabel);
         placeKnob (row.removeFromLeft (cellW), wetSlider,      wetLabel);
         placeKnob (row.removeFromLeft (cellW), irGainSlider,   irGainLabel);
         placeKnob (row.removeFromLeft (cellW), outputSlider,   outputLabel);
         placeKnob (row.removeFromLeft (cellW), toneSlider,     toneLabel);
+        placeKnob (row.removeFromLeft (cellW), inHPSlider,     inHPLabel);
+        placeKnob (row.removeFromLeft (cellW), inLPSlider,     inLPLabel);
         placeKnob (row.removeFromLeft (cellW), preDelaySlider, preDelayLabel);
         placeKnob (row.removeFromLeft (cellW), widthSlider,    widthLabel);
     }

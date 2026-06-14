@@ -16,6 +16,8 @@ struct IRBakeParams
     bool  reverse = false;     // reverse the IR before windowing
     bool  autoLevel = true;    // scale the kernel to unity energy (max-channel L2 = 1);
                                // false = "Raw": the IR's recorded level, unscaled
+    bool  msMode = false;      // encode the kernel to mid/side (mid=ch0, side=ch1) so the
+                               // audio thread can convolve mid-with-mid, side-with-side
 
     bool operator== (const IRBakeParams& o) const noexcept
     {
@@ -24,7 +26,8 @@ struct IRBakeParams
             && decayOff == o.decayOff
             && juce::approximatelyEqual (taperMs, o.taperMs)
             && reverse == o.reverse
-            && autoLevel == o.autoLevel;
+            && autoLevel == o.autoLevel
+            && msMode == o.msMode;
     }
     bool operator!= (const IRBakeParams& o) const noexcept { return ! (*this == o); }
 };

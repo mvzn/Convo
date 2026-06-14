@@ -78,6 +78,9 @@ private:
     std::atomic<float>* irGainParam   = nullptr;
     std::atomic<float>* outputParam   = nullptr;
     std::atomic<float>* toneParam     = nullptr;
+    std::atomic<float>* inHPParam     = nullptr;   // pre-IR high-pass (low cut)
+    std::atomic<float>* inLPParam     = nullptr;   // pre-IR low-pass  (high cut)
+    std::atomic<float>* msParam       = nullptr;   // mid/side convolution mode
     std::atomic<float>* preDelayParam = nullptr;
     std::atomic<float>* widthParam    = nullptr;
     std::atomic<float>* duckParam     = nullptr;
@@ -96,13 +99,15 @@ private:
     using Duplicator = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
                                                       juce::dsp::IIR::Coefficients<float>>;
     Duplicator lowShelf, highShelf;                  // tilt tone
+    Duplicator inputHP, inputLP;                     // pre-IR input filter (first-order, 6 dB/oct)
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> preDelayLine { 1 };
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>   dryDelayLine  { 1 };
 
     // smoothed gains / controls (audio thread)
     juce::SmoothedValue<float> dryGainSm, wetGainSm, irGainSm, outputGainSm, toneSm, widthSm, duckSm, bypassSm, loadFade,
                                noIrSm,               // no-IR auto-bypass: dry at unity while nothing is live
-                               wetCompSm;            // adaptive wet gain compensation (dry-referenced)
+                               wetCompSm,            // adaptive wet gain compensation (dry-referenced)
+                               inHPSm, inLPSm;       // pre-IR filter cutoffs (smoothed, per-block coeff rebuild)
 
     double currentSampleRate = 48000.0;
     int    maxPreDelaySamples = 1;
@@ -117,6 +122,7 @@ private:
     std::atomic<float> inputLevel  { 0.0f };
     std::atomic<float> outputLevel { 0.0f };
     std::atomic<float> tailSeconds { 0.0f };         // baked IR length + max pre-delay
+    std::atomic<bool>  msActive    { false };        // audio thread M/S-encodes iff the live kernel is M/S
 
     // setStateInformation may run off the message thread (Cubase project load);
     // it only stashes the path here and the timer performs the actual load.

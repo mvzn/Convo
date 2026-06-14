@@ -15,6 +15,9 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     irGainParam   = apvts.getRawParameterValue ("irGain");
     outputParam   = apvts.getRawParameterValue ("output");
     toneParam     = apvts.getRawParameterValue ("tone");
+    inHPParam     = apvts.getRawParameterValue ("inHP");
+    inLPParam     = apvts.getRawParameterValue ("inLP");
+    msParam       = apvts.getRawParameterValue ("ms");
     preDelayParam = apvts.getRawParameterValue ("preDelay");
     widthParam    = apvts.getRawParameterValue ("width");
     duckParam     = apvts.getRawParameterValue ("duck");
@@ -66,6 +69,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
         ParameterID { "tone", 1 }, "Tone",
         NormalisableRange<float> (-100.0f, 100.0f, 0.1f), 0.0f, "%"));
 
+    // pre-IR input filter (first-order, 6 dB/oct), applied to the wet source before
+    // convolution; the extremes (20 Hz HP / 20 kHz LP) are effectively flat
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "inHP", 1 }, "Input HP",
+        NormalisableRange<float> (20.0f, 2000.0f, 1.0f, 0.25f), 20.0f, "Hz"));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "inLP", 1 }, "Input LP",
+        NormalisableRange<float> (200.0f, 20000.0f, 1.0f, 0.25f), 20000.0f, "Hz"));
+
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "preDelay", 1 }, "Pre-Delay",
         NormalisableRange<float> (0.0f, 500.0f, 0.1f, 0.4f), 0.0f, "ms"));
@@ -115,6 +128,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "wetComp", 1 }, "Wet Comp", true));
 
+    // mid/side convolution: bake the kernel to M/S and convolve mid-with-mid,
+    // side-with-side (re-bakes the IR; masked by the load fade)
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "ms", 1 }, "Mid/Side", false));
+
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "bypass", 1 }, "Bypass", false));
 
@@ -154,6 +172,13 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     lowShelf.reset();
     highShelf.reset();
 
+    inputHP.prepare (spec);
+    inputLP.prepare (spec);
+    *inputHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (sampleRate, inHPParam->load());
+    *inputLP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass  (sampleRate, inLPParam->load());
+    inputHP.reset();
+    inputLP.reset();
+
     maxPreDelaySamples = (int) std::ceil (0.5 * sampleRate) + 1;
     preDelayLine.setMaximumDelayInSamples (maxPreDelaySamples);
     preDelayLine.prepare (spec);
@@ -182,6 +207,8 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     loadFade.reset     (sampleRate, 0.015);
     noIrSm.reset       (sampleRate, 0.05);
     wetCompSm.reset    (sampleRate, 0.25);   // slow follower: a loudness keeper, not a compressor
+    inHPSm.reset       (sampleRate, 0.05);
+    inLPSm.reset       (sampleRate, 0.05);
 
     dryGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (dryParam->load(),    -60.0f));
     wetGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (wetParam->load(),    -60.0f));
@@ -194,6 +221,8 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     loadFade.setCurrentAndTargetValue     (1.0f);
     noIrSm.setCurrentAndTargetValue       (convolution.hasIR() ? 0.0f : 1.0f);
     wetCompSm.setCurrentAndTargetValue    (1.0f);
+    inHPSm.setCurrentAndTargetValue       (inHPParam->load());
+    inLPSm.setCurrentAndTargetValue       (inLPParam->load());
 
     duckEnv       = 0.0f;
     wetCompTarget = 1.0f;
@@ -207,6 +236,8 @@ void ConvoAudioProcessor::releaseResources()
     convolution.reset();
     lowShelf.reset();
     highShelf.reset();
+    inputHP.reset();
+    inputLP.reset();
     preDelayLine.reset();
     dryDelayLine.reset();
 }
@@ -283,7 +314,52 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     auto wetBlock = juce::dsp::AudioBlock<float> (wetWork)
                         .getSubsetChannelBlock (0, (size_t) numCh)
                         .getSubBlock (0, (size_t) numSamples);
+
+    // pre-IR input filter: first-order HP + LP (6 dB/oct) on the wet source only,
+    // so the dry tap stays unfiltered. Coeffs rebuilt per block from smoothed cutoffs.
+    {
+        inHPSm.setTargetValue (inHPParam->load());
+        inLPSm.setTargetValue (inLPParam->load());
+        *inputHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (
+            currentSampleRate, inHPSm.skip (numSamples));
+        *inputLP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass (
+            currentSampleRate, inLPSm.skip (numSamples));
+        juce::dsp::ProcessContextReplacing<float> fctx (wetBlock);
+        inputHP.process (fctx);
+        inputLP.process (fctx);
+    }
+
+    // mid/side mode: encode the wet source to M = (L+R)/2, S = (L-R)/2 so channel-wise
+    // convolution with the M/S-baked kernel becomes mid-with-mid, side-with-side.
+    // msActive is published by the message thread only once the M/S kernel is loaded.
+    const bool msEncode = msActive.load() && numCh >= 2;
+    if (msEncode)
+    {
+        auto* L = wetWork.getWritePointer (0);
+        auto* R = wetWork.getWritePointer (1);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float m = 0.5f * (L[i] + R[i]);
+            const float s = 0.5f * (L[i] - R[i]);
+            L[i] = m;
+            R[i] = s;
+        }
+    }
+
     convolution.process (wetBlock);
+
+    if (msEncode)   // decode mid/side back to L/R: L = M + S, R = M - S
+    {
+        auto* M = wetWork.getWritePointer (0);
+        auto* S = wetWork.getWritePointer (1);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float l = M[i] + S[i];
+            const float r = M[i] - S[i];
+            M[i] = l;
+            S[i] = r;
+        }
+    }
 
     // tone (tilt): rebuild shelf coefficients once per block from the smoothed value.
     // ArrayCoefficients + Coefficients::operator= reuse the existing array storage,
@@ -438,6 +514,7 @@ IRBakeParams ConvoAudioProcessor::currentBakeParams() const
     p.taperMs      = taperParam->load();
     p.reverse      = reverseParam->load() > 0.5f;
     p.autoLevel    = rawLevelParam->load() < 0.5f;
+    p.msMode       = msParam->load() > 0.5f;
     return p;
 }
 
@@ -464,10 +541,20 @@ void ConvoAudioProcessor::timerCallback()
     const auto cur = currentBakeParams();
     if (cur != lastBaked && cur == lastSeenBakeParams)
     {
+        const bool msChanged = (cur.msMode != lastBaked.msMode);
         convolution.rebake (irLibrary.getIR(), irLibrary.getSampleRate(), cur, bakedIR);
         bakedIRSampleRate = irLibrary.getSampleRate();
         lastBaked = cur;
         tailSeconds.store ((float) (bakedIR.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
+
+        // M/S changes the audio-thread routing, so publish the new mode and arm the
+        // output fade to mask the kernel re-encode (the other bake knobs don't change
+        // routing, so JUCE's internal kernel crossfade alone is seamless for them)
+        if (msChanged)
+        {
+            msActive.store (cur.msMode);
+            loadFadePending.store (true);
+        }
         bakeGeneration.fetch_add (1);
     }
     lastSeenBakeParams = cur;
@@ -484,6 +571,7 @@ bool ConvoAudioProcessor::loadIRFile (const juce::File& file)
     bakedIRSampleRate  = irLibrary.getSampleRate();
     lastBaked          = cur;
     lastSeenBakeParams = cur;
+    msActive.store (cur.msMode);   // kernel is baked to match the current M/S mode
     tailSeconds.store ((float) (bakedIR.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
 
     loadFadePending.store (true);      // arm the click mask before publishing the delay
