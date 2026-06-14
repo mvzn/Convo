@@ -13,6 +13,13 @@ jobs:
   build:
     name: ${{ matrix.os }} (${{ matrix.build_type }})
     runs-on: ${{ matrix.os }}
+    # Windows: force MSVC embedded debug info (/Z7) for EVERY cl.exe, appended after the
+    # command line so it overrides any /Zi. This reaches JUCE's juceaide helper — a separate
+    # nested CMake build (Debug, /Zi /MP) that ignores the configure-time
+    # CMAKE_MSVC_DEBUG_INFORMATION_FORMAT and otherwise races on a shared vc140.pdb under
+    # sccache (fatal C1041 at configure time). No-op on Linux/macOS (no cl.exe).
+    env:
+      _CL_: /Z7
     strategy:
       fail-fast: false
       matrix:
