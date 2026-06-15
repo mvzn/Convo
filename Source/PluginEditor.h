@@ -45,7 +45,7 @@ private:
                         const juce::ColourGradient& fill);
     void renderOverlay();              // (re)build the cached EQ curve + bass-mono marker on param/size change
     void drawFilterOverlay (juce::Graphics&);   // stroke the cached overlay over the wave (no recompute)
-    void updateKnobStates();           // dim Bass Mono while Mid/Side is off (its only no-op state)
+    void updateKnobStates();           // mode hints: dim Bass Mono (M/S off), relabel In->IR (Filter IR on)
     float uiScale() const;             // physical px per logical px, for crisp caches
 
     ConvoAudioProcessor& processor;
@@ -64,6 +64,7 @@ private:
     juce::String              lastFileName;
     int                       lastBakeGen = -1;
     bool                      fileOver = false;
+    bool                      inFilterLabelsOnIR = false;   // In HP/In LP labels currently read "IR …" (Filter IR on)
     double                    bakedLenSeconds = 0.0;
     juce::String              bakedLenText;          // cached "N.NN s" label (no per-paint String build)
 

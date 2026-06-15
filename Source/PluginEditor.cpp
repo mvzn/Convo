@@ -66,8 +66,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     filterIRButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::mint);
     rawLevelButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);  // copper = "careful"
     bypassButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::copper);
-    rawLevelButton.setTooltip ("Use the IR's recorded level unscaled — dense full-scale "
-                               "audio can convolve 30..45 dB hot");
+    rawLevelButton.setTooltip ("Use the IR's recorded level unscaled "
+                               "(audio can convolve 30..45 dB hot)");
     wetCompButton.setTooltip  ("Adaptive wet gain compensation: tracks the dry input level "
                                "and trims the wet to match; frozen while the input is quiet "
                                "so tails ring out");
@@ -75,7 +75,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 6 dB/oct, on the signal feeding the IR");
     fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp is capped at 80% of the IR length");
     msButton.setTooltip   ("Mid/Side: convolve mid-with-mid and side-with-side (re-bakes the "
-                           "IR as M/S). Wants a stereo IR — a mono IR collapses to mono");
+                           "IR as M/S). Wants a stereo IR (a mono IR collapses to input to mono)");
     msBassSlider.setTooltip ("Bass Mono (Mid/Side only): high-passes the side so content below "
                              "the cutoff collapses to mono. 20 Hz = off");
     filterIRButton.setTooltip ("Apply the In HP/In LP filter to the IR (baked, shown in the "
@@ -85,7 +85,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     // --- mix / output ---
     drySlider.setTooltip    ("Level of the unprocessed (dry) signal in the mix");
     wetSlider.setTooltip    ("Level of the convolved (wet) signal in the mix");
-    irGainSlider.setTooltip ("Gain of the impulse response itself — scales the wet convolution. "
+    irGainSlider.setTooltip ("Gain of the impulse response itself (scales the wet convolution.) "
                              "Separate from Wet (the wet mix level)");
     outputSlider.setTooltip ("Final output trim, applied after the dry/wet mix");
 
@@ -95,8 +95,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     widthSlider.setTooltip    ("Stereo width of the wet (M/S): 0% = mono, 100% = unchanged, 200% = extra wide");
     preDelaySlider.setTooltip ("Delays the wet only (creative pre-delay); the dry tap stays in place. "
                                "Not reported as plugin latency");
-    duckSlider.setTooltip     ("Ducks the wet by the dry input level — louder input pulls the wet back, "
-                               "so transients stay clear");
+    duckSlider.setTooltip     ("Ducks the wet by the dry input level (louder input pulls the wet back, "
+                               "so transients stay clear)");
     duckRelSlider.setTooltip  ("How quickly the wet recovers after the input stops ducking it");
 
     // --- IR bake controls ---
@@ -108,7 +108,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     // --- output guards / global ---
     clipGuardButton.setTooltip ("Soft-clip ceiling on the final output: transparent below -2.5 dBFS, "
                                 "catches overs. Defeatable");
-    bypassButton.setTooltip    ("Bypass the effect — passes the dry input through at unity");
+    bypassButton.setTooltip    ("Passes the dry input through at unity");
     loadButton.setTooltip      ("Load an impulse response (.wav / .aif / .aiff / .ogg / .flac). "
                                 "You can also drag a file onto the display");
 
@@ -141,6 +141,33 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     wetCompAtt   = std::make_unique<ButtonAttachment> (apvts, "wetComp",   wetCompButton);
     msAtt        = std::make_unique<ButtonAttachment> (apvts, "ms",        msButton);
     bypassAtt    = std::make_unique<ButtonAttachment> (apvts, "bypass",    bypassButton);
+
+    // show the unit on each knob's value box (dB / Hz / ms / %). The slider attachment points
+    // textFromValueFunction at the parameter's getText, which omits the label, so wrap it to
+    // append the parameter's own unit — skipping values that already carry one (e.g. Decay's
+    // "Off" / "... ms") so nothing gets doubled.
+    struct { juce::Slider* s; const char* id; } unitSliders[] = {
+        { &drySlider, "dry" }, { &wetSlider, "wet" }, { &irGainSlider, "irGain" },
+        { &outputSlider, "output" }, { &toneSlider, "tone" }, { &inHPSlider, "inHP" },
+        { &inLPSlider, "inLP" }, { &preDelaySlider, "preDelay" }, { &widthSlider, "width" },
+        { &msBassSlider, "msBass" }, { &duckSlider, "duck" }, { &duckRelSlider, "duckRelease" },
+        { &fadeInSlider, "fadeIn" }, { &decaySlider, "decay" }, { &taperSlider, "taper" }
+    };
+    for (auto& u : unitSliders)
+    {
+        if (auto* rp = apvts.getParameter (u.id))
+        {
+            u.s->textFromValueFunction = [rp] (double v)
+            {
+                const auto txt  = rp->getText (rp->convertTo0to1 ((float) v), 0);
+                const auto unit = rp->getLabel();
+                if (unit.isEmpty() || txt.endsWith (unit) || ! txt.containsAnyOf ("0123456789"))
+                    return txt;
+                return txt + " " + unit;
+            };
+            u.s->updateText();
+        }
+    }
 
     lastFileName = processor.getIRLibrary().getDisplayName();
     fileNameLabel.setText (lastFileName, juce::dontSendNotification);
@@ -418,9 +445,28 @@ void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
     g.setColour (curveCol.withAlpha (0.5f));
     g.strokePath (eqCurvePath, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved));
 
+    const auto zone = waveZone.toFloat();
+    constexpr double fLo = 20.0, fHi = 20000.0;
+
+    // frequency reference anchors along the bottom: just the log-decade marks (100 / 1k / 10k)
+    // so the filter curve is readable without cluttering the display
+    {
+        struct { double f; const char* txt; } refs[] = { { 100.0, "100Hz" }, { 1000.0, "1kHz" }, { 10000.0, "10kHz" } };
+        g.setFont (juce::Font (juce::FontOptions (10.0f)));
+        for (const auto& r : refs)
+        {
+            const double tt = std::log (r.f / fLo) / std::log (fHi / fLo);
+            const float  x  = zone.getX() + (float) tt * zone.getWidth();
+            g.setColour (ConvoColours::border.withAlpha (0.55f));
+            g.drawVerticalLine (juce::roundToInt (x), zone.getBottom() - 4.0f, zone.getBottom());
+            g.setColour (ConvoColours::textDim.withAlpha (0.7f));
+            g.drawText (r.txt, juce::Rectangle<float> (x - 16.0f, zone.getBottom() - 15.0f, 32.0f, 11.0f),
+                        juce::Justification::centred);
+        }
+    }
+
     if (monoMarkerX >= 0.0f)
     {
-        const auto zone = waveZone.toFloat();
         const juce::Line<float> vline (monoMarkerX, zone.getY(), monoMarkerX, zone.getBottom());
         const auto monoCol = ConvoColours::copper;
 
@@ -429,38 +475,52 @@ void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
         const float dashes[] = { 3.0f, 3.0f };
         g.setColour (monoCol.withAlpha (0.15f)); g.drawDashedLine (vline, dashes, 2, 2.4f);
         g.setColour (monoCol.withAlpha (0.20f)); g.drawDashedLine (vline, dashes, 2, 1.6f);
-        g.setColour (monoCol.withAlpha (0.9f)); g.drawDashedLine (vline, dashes, 2, 1.0f);   // core dots
+        g.setColour (monoCol.withAlpha (0.9f));  g.drawDashedLine (vline, dashes, 2, 1.0f);   // core dots
 
-        // label the two sides of the crossover: mono below, stereo above
+        // label the two sides of the crossover along the top: mono to the left, stereo to the right
         g.setFont (captionFont());
         if (monoMarkerX - zone.getX() > 34.0f)
         {
-            g.setColour (monoCol.withAlpha (0.75f));
-            g.drawText ("mono", juce::Rectangle<float> (zone.getX(), zone.getBottom() - 16.0f,
+            g.setColour (monoCol.withAlpha (0.9f));
+            g.drawText ("mono", juce::Rectangle<float> (zone.getX(), zone.getY() + 2.0f,
                                                         monoMarkerX - zone.getX() - 5.0f, 14.0f),
                         juce::Justification::centredRight);
         }
         if (zone.getRight() - monoMarkerX > 40.0f)
         {
-            g.setColour (ConvoColours::mint.withAlpha (0.7f));   // mint = the stereo/wide side
-            g.drawText ("stereo", juce::Rectangle<float> (monoMarkerX + 5.0f, zone.getBottom() - 16.0f,
+            g.setColour (ConvoColours::mint.withAlpha (0.9f));   // mint = the stereo/wide side
+            g.drawText ("stereo", juce::Rectangle<float> (monoMarkerX + 5.0f, zone.getY() + 2.0f,
                                                           zone.getRight() - monoMarkerX - 7.0f, 14.0f),
                         juce::Justification::centredLeft);
         }
     }
 }
 
-// Bass Mono is the one control disabled by another control's state: it high-passes the side,
-// so it does nothing unless Mid/Side is on. Dim it + its label to ~half alpha when M/S is off,
-// while keeping it interactive. Alpha is only touched on the flip, so the 30 Hz poll is free.
+// Mode hints, polled at 30 Hz but only touched on a flip:
+//  - Bass Mono only does anything in Mid/Side mode, so dim it (interactive) while M/S is off.
+//  - In HP / In LP filter the input by default; when Filter IR is on they're baked into the IR
+//    instead, so relabel "In -> IR" and tint them mint (matching the Filter IR tick) to show it.
 void ConvoAudioProcessorEditor::updateKnobStates()
 {
-    const bool msOn = processor.getAPVTS().getRawParameterValue ("ms")->load() > 0.5f;
+    auto& a = processor.getAPVTS();
+
+    const bool msOn = a.getRawParameterValue ("ms")->load() > 0.5f;
     const float t = msOn ? 1.0f : 0.45f;
     if (! juce::approximatelyEqual (msBassSlider.getAlpha(), t))
     {
         msBassSlider.setAlpha (t);
         msBassLabel.setAlpha (t);
+    }
+
+    const bool onIR = a.getRawParameterValue ("filterIR")->load() > 0.5f;
+    if (onIR != inFilterLabelsOnIR)
+    {
+        inFilterLabelsOnIR = onIR;
+        const auto col = onIR ? ConvoColours::mint : ConvoColours::label;
+        inHPLabel.setText (onIR ? "IR HP" : "In HP", juce::dontSendNotification);
+        inLPLabel.setText (onIR ? "IR LP" : "In LP", juce::dontSendNotification);
+        inHPLabel.setColour (juce::Label::textColourId, col);
+        inLPLabel.setColour (juce::Label::textColourId, col);
     }
 }
 
