@@ -5,6 +5,7 @@
 # Test runner build artifacts
 tests/build/
 tests/runtests
+tests/
 
 # IDE / editor
 .vscode/
@@ -14,6 +15,13 @@ tests/runtests
 
 # OS
 .DS_Store
+
+# Local MD Files
+AUDIT.md
+CLAUDE.md
+OPTIMISATION.md
+prd.md
+TEST_PLAN.md
 
 # JUCE / CMake generated
 JuceLibraryCode/
