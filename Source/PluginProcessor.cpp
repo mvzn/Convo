@@ -25,6 +25,8 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     widthParam    = apvts.getRawParameterValue ("width");
     duckParam     = apvts.getRawParameterValue ("duck");
     duckRelParam  = apvts.getRawParameterValue ("duckRelease");
+    irStartParam  = apvts.getRawParameterValue ("irStart");
+    irEndParam    = apvts.getRawParameterValue ("irEnd");
     fadeInParam   = apvts.getRawParameterValue ("fadeIn");
     decayParam    = apvts.getRawParameterValue ("decay");
     taperParam    = apvts.getRawParameterValue ("taper");
@@ -104,6 +106,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
         NormalisableRange<float> (20.0f, 1000.0f, 1.0f, 0.4f), 200.0f, "ms"));
 
     // --- IR-bake controls ---
+    // IR trim: keep only the region between Start and End (fraction of the IR length).
+    // Driven by draggable handles on the waveform display; bake params, so they re-window
+    // the kernel through the same debounce path as Fade In / Decay / Taper.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "irStart", 1 }, "IR Start",
+        NormalisableRange<float> (0.0f, 1.0f, 0.0001f), 0.0f, "%",
+        AudioProcessorParameter::genericParameter,
+        [] (float v, int) { return juce::String (v * 100.0f, 1) + " %"; }));
+
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "irEnd", 1 }, "IR End",
+        NormalisableRange<float> (0.0f, 1.0f, 0.0001f), 1.0f, "%",
+        AudioProcessorParameter::genericParameter,
+        [] (float v, int) { return juce::String (v * 100.0f, 1) + " %"; }));
+
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "fadeIn", 1 }, "Fade In",
         NormalisableRange<float> (0.0f, 10000.0f, 1.0f, 0.35f), 0.0f, "ms"));
@@ -580,6 +597,8 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 IRBakeParams ConvoAudioProcessor::currentBakeParams() const
 {
     IRBakeParams p;
+    p.startFrac    = irStartParam->load();
+    p.endFrac      = irEndParam->load();
     p.fadeInMs     = fadeInParam->load();
     const float dec = decayParam->load();
     p.decayOff     = dec >= kDecayOffMs - 0.5f;
@@ -661,6 +680,65 @@ bool ConvoAudioProcessor::loadIRFile (const juce::File& file)
     bakeGeneration.fetch_add (1);
 
     apvts.state.setProperty ("irPath", file.getFullPathName(), nullptr);
+    return true;
+}
+
+juce::File ConvoAudioProcessor::getPresetsFolder()
+{
+    auto folder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                      .getChildFile ("Convo").getChildFile ("Presets");
+    if (! folder.isDirectory())
+        folder.createDirectory();   // harmless if it already exists or can't be created
+    return folder;
+}
+
+juce::Array<juce::File> ConvoAudioProcessor::getPresetFiles() const
+{
+    juce::Array<juce::File> files;
+    const auto folder = getPresetsFolder();
+    if (folder.isDirectory())
+        files = folder.findChildFiles (juce::File::findFiles, false, "*.xml");
+
+    // case-insensitive name sort so the prev/next arrows step in a stable, human order
+    struct ByName { static int compareElements (const juce::File& a, const juce::File& b)
+        { return a.getFileNameWithoutExtension().compareIgnoreCase (b.getFileNameWithoutExtension()); } };
+    ByName comparator;
+    files.sort (comparator, true);
+    return files;
+}
+
+bool ConvoAudioProcessor::savePreset (const juce::String& presetName)
+{
+    const auto name = juce::File::createLegalFileName (presetName).trim();
+    if (name.isEmpty())
+        return false;
+
+    auto file = getPresetsFolder().getChildFile (name + ".xml");
+    if (auto xml = apvts.copyState().createXml())
+        return xml->writeTo (file);
+    return false;
+}
+
+bool ConvoAudioProcessor::loadPreset (const juce::File& presetFile)
+{
+    if (! presetFile.existsAsFile())
+        return false;
+
+    auto xml = juce::XmlDocument::parse (presetFile);
+    if (xml == nullptr || ! xml->hasTagName (apvts.state.getType()))
+        return false;
+
+    apvts.replaceState (juce::ValueTree::fromXml (*xml));
+
+    // loadPreset is always on the message thread, so load the IR right away (unlike
+    // setStateInformation, which may run on a worker and defers to the timer)
+    const auto path = apvts.state.getProperty ("irPath").toString();
+    if (path.isNotEmpty())
+    {
+        const juce::File f (path);
+        if (f.existsAsFile())
+            loadIRFile (f);
+    }
     return true;
 }
 

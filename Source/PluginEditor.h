@@ -33,11 +33,23 @@ public:
 
     void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
+    // IR trim handles on the waveform
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseDrag (const juce::MouseEvent&) override;
+    void mouseUp   (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+
 private:
     void timerCallback() override;
     void openFileChooser();
     void loadFile (const juce::File& file);
     void rebuildThumbnail();
+
+    // presets
+    void showPresetMenu();                 // popup: save new + pick by name
+    void stepPreset (int direction);       // prev (-1) / next (+1) through the sorted folder
+    void loadPresetFile (const juce::File& file);
+    void promptSavePreset();               // async name prompt -> processor.savePreset
 
     void renderBackground();           // static chrome -> backgroundImage
     void renderWaveImage();            // baked-IR waveform -> waveImage
@@ -45,8 +57,15 @@ private:
                         const juce::ColourGradient& fill);
     void renderOverlay();              // (re)build the cached EQ curve + bass-mono marker on param/size change
     void drawFilterOverlay (juce::Graphics&);   // stroke the cached overlay over the wave (no recompute)
+    void drawTrimHandles (juce::Graphics&);     // dim trimmed regions + draw the Start/End handles
     void updateKnobStates();           // mode hints: dim Bass Mono (M/S off), relabel In->IR (Filter IR on)
     float uiScale() const;             // physical px per logical px, for crisp caches
+
+    // IR trim handle geometry / hit-testing (all in editor-local coords)
+    enum class TrimHandle { none, start, end };
+    float trimFracToX (float frac) const;       // map a 0..1 fraction to an x in waveZone
+    float trimXToFrac (int x) const;            // map an editor x to a clamped 0..1 fraction
+    TrimHandle trimHandleAt (juce::Point<int> p) const;   // which handle (if any) is under the cursor
 
     ConvoAudioProcessor& processor;
 
@@ -61,6 +80,9 @@ private:
     std::unique_ptr<juce::AudioThumbnail> thumbnail;
     juce::Label               fileNameLabel;
     juce::TextButton          loadButton { "Load IR..." };
+    juce::TextButton          presetButton { "Presets" };
+    juce::TextButton          prevPresetButton { juce::String::fromUTF8 ("\xE2\x97\x80") };   // ◀
+    juce::TextButton          nextPresetButton { juce::String::fromUTF8 ("\xE2\x96\xB6") };   // ▶
     juce::String              lastFileName;
     int                       lastBakeGen = -1;
     bool                      fileOver = false;
@@ -96,6 +118,14 @@ private:
     float eqToneSeen = -1.0e9f, eqHpSeen = -1.0e9f, eqLpSeen = -1.0e9f, eqBassSeen = -1.0e9f;
     bool  eqMsSeen = false;
 
+    // IR trim handles (Start/End): drag state + last-seen param values so the timer can
+    // repaint the wave layer when a handle moves (the bake itself re-windows via the
+    // processor's debounced timer; these params already drive the bake through APVTS)
+    TrimHandle activeHandle = TrimHandle::none;   // handle currently being dragged
+    TrimHandle hoverHandle  = TrimHandle::none;   // handle under the cursor (affordance)
+    float trimStartSeen = -1.0e9f, trimEndSeen = -1.0e9f;
+    static constexpr int kTrimHandleHitPx = 8;    // half-width of a handle's grab zone
+
     // cached overlay: rebuilt only when its params/size change, then just stroked in paint
     juce::Path eqCurvePath;
     float      monoMarkerX = -1.0f;    // bass-mono marker x in waveZone coords; < 0 = hidden
@@ -103,6 +133,10 @@ private:
     juce::ColourGradient inMeterGrad, outMeterGrad;   // cached -> no per-frame gradient alloc
 
     std::unique_ptr<juce::FileChooser> chooser;
+
+    // presets: the file last loaded via the arrows/menu, so the arrows can resume from it
+    juce::File           currentPresetFile;
+    std::unique_ptr<juce::AlertWindow> savePresetWindow;   // async "name this preset" dialog
 
     // cached chrome (rendered at physical resolution for HiDPI crispness)
     juce::Image backgroundImage, waveImage;

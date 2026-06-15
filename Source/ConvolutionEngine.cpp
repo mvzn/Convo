@@ -62,17 +62,39 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
     juce::AudioBuffer<float> out;
     out.makeCopyOf (raw);
 
+    // 0. trim: keep only the IR region between startFrac and endFrac (head/tail trim).
+    //    Applied before all shaping so reverse/fade/decay/taper operate on the kept
+    //    region. The window is clamped to at least one sample so a fully collapsed
+    //    range (start >= end) still yields a valid (if tiny) kernel.
+    {
+        const float s = juce::jlimit (0.0f, 1.0f, bp.startFrac);
+        const float e = juce::jlimit (0.0f, 1.0f, bp.endFrac);
+        int first = juce::jlimit (0, n - 1, (int) std::floor ((double) s * (double) n));
+        int last  = juce::jlimit (0, n,     (int) std::ceil  ((double) e * (double) n));   // exclusive
+        if (last <= first)
+            last = first + 1;
+        const int trimLen = last - first;
+        if (trimLen < n)
+        {
+            juce::AudioBuffer<float> trimmed (numCh, trimLen);
+            for (int ch = 0; ch < numCh; ++ch)
+                trimmed.copyFrom (ch, 0, out, ch, first, trimLen);
+            out = std::move (trimmed);
+        }
+    }
+    const int len = out.getNumSamples();   // working length after trim (n is the raw length)
+
     // 1. reverse (before all windowing, so fade-in shapes what becomes the new onset)
     if (bp.reverse)
         for (int ch = 0; ch < numCh; ++ch)
         {
             auto* d = out.getWritePointer (ch);
-            std::reverse (d, d + n);
+            std::reverse (d, d + len);
         }
 
     // 2. fade-in: raised-cosine ramp 0 -> 1 over the first fadeInSamps, capped at 80% of
     //    the sample so the longest fade still leaves a fifth of the IR at full level
-    const int fadeInMax  = (int) (0.8 * (double) n);
+    const int fadeInMax  = (int) (0.8 * (double) len);
     const int fadeInSamps = juce::jlimit (0, fadeInMax, (int) std::round (bp.fadeInMs * 0.001 * irSampleRate));
     for (int i = 0; i < fadeInSamps; ++i)
     {
@@ -86,14 +108,14 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
     //    truncate where it crosses -60 dB to save CPU. decayOff => tail as recorded.
     //    The envelope is accumulated incrementally (g *= step) instead of a pow() per
     //    sample — identical math, orders of magnitude cheaper on long IRs.
-    int lEff = n;
+    int lEff = len;
     if (! bp.decayOff && bp.decaySeconds > 0.0f)
     {
         const double decaySamps = juce::jmax (1.0, (double) bp.decaySeconds * irSampleRate);
         const double step       = std::pow (10.0, -3.0 / decaySamps);   // per-sample ratio
         double g = 1.0;                                                 // 10^(-3*0/decaySamps)
         lEff = fadeInSamps;
-        for (int i = fadeInSamps; i < n; ++i)
+        for (int i = fadeInSamps; i < len; ++i)
         {
             if (g < 0.001)            // -60 dB
                 break;
@@ -103,7 +125,7 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
             g *= step;
         }
     }
-    lEff = juce::jlimit (1, n, lEff);
+    lEff = juce::jlimit (1, len, lEff);
 
     // 4. tail-taper: raised-cosine 1 -> 0 over the last taperSamps before lEff
     //    (de-click). (k+1)/taperSamps so the final kernel sample lands exactly on 0.
@@ -118,7 +140,7 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
     }
 
     // 5. truncate to the effective length
-    if (lEff < n)
+    if (lEff < len)
         out.setSize (numCh, lEff, true, true, true);
 
     // 6. auto-level: one gain for all channels (stereo balance preserved) so the

@@ -179,6 +179,16 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     loadButton.onClick = [this] { openFileChooser(); };
     addAndMakeVisible (loadButton);
 
+    presetButton.setTooltip     ("Save the current settings as a preset, or pick a saved one");
+    prevPresetButton.setTooltip ("Previous preset");
+    nextPresetButton.setTooltip ("Next preset");
+    presetButton.onClick     = [this] { showPresetMenu(); };
+    prevPresetButton.onClick = [this] { stepPreset (-1); };
+    nextPresetButton.onClick = [this] { stepPreset (+1); };
+    addAndMakeVisible (presetButton);
+    addAndMakeVisible (prevPresetButton);
+    addAndMakeVisible (nextPresetButton);
+
     rebuildThumbnail();
 
     setSize (900, 610);
@@ -496,6 +506,150 @@ void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
     }
 }
 
+// ---------------------------------------------------------------------------
+// IR trim handles (draggable Start / End on the waveform)
+// ---------------------------------------------------------------------------
+
+float ConvoAudioProcessorEditor::trimFracToX (float frac) const
+{
+    const auto z = waveZone.toFloat();
+    return z.getX() + juce::jlimit (0.0f, 1.0f, frac) * z.getWidth();
+}
+
+float ConvoAudioProcessorEditor::trimXToFrac (int x) const
+{
+    const auto z = waveZone.toFloat();
+    if (z.getWidth() <= 0.0f)
+        return 0.0f;
+    return juce::jlimit (0.0f, 1.0f, ((float) x - z.getX()) / z.getWidth());
+}
+
+ConvoAudioProcessorEditor::TrimHandle ConvoAudioProcessorEditor::trimHandleAt (juce::Point<int> p) const
+{
+    // only grab while a waveform is shown and the cursor is within the wave zone band
+    if (! waveImage.isValid() || ! waveZone.contains (p))
+        return TrimHandle::none;
+
+    auto& a = processor.getAPVTS();
+    const float sx = trimFracToX (a.getRawParameterValue ("irStart")->load());
+    const float ex = trimFracToX (a.getRawParameterValue ("irEnd")->load());
+
+    const float dxStart = std::abs ((float) p.x - sx);
+    const float dxEnd   = std::abs ((float) p.x - ex);
+    // when the two handles overlap, prefer whichever the cursor is nearer
+    if (dxStart <= (float) kTrimHandleHitPx && dxStart <= dxEnd) return TrimHandle::start;
+    if (dxEnd   <= (float) kTrimHandleHitPx)                     return TrimHandle::end;
+    return TrimHandle::none;
+}
+
+// Shade the trimmed-off regions and draw the two handles. Called from paint() over the
+// wave; no recompute — just reads the current Start/End params.
+void ConvoAudioProcessorEditor::drawTrimHandles (juce::Graphics& g)
+{
+    if (! waveImage.isValid())
+        return;
+
+    auto& a = processor.getAPVTS();
+    const float startFrac = a.getRawParameterValue ("irStart")->load();
+    const float endFrac   = a.getRawParameterValue ("irEnd")->load();
+    const auto  z  = waveZone.toFloat();
+    const float sx = trimFracToX (startFrac);
+    const float ex = trimFracToX (endFrac);
+
+    // dim the trimmed-off head (left of Start) and tail (right of End)
+    g.setColour (ConvoColours::bg.withAlpha (0.62f));
+    if (sx > z.getX() + 0.5f)
+        g.fillRect (juce::Rectangle<float> (z.getX(), z.getY(), sx - z.getX(), z.getHeight()));
+    if (ex < z.getRight() - 0.5f)
+        g.fillRect (juce::Rectangle<float> (ex, z.getY(), z.getRight() - ex, z.getHeight()));
+
+    auto drawHandle = [&] (float x, TrimHandle which, bool pointsRight)
+    {
+        const bool hot = (activeHandle == which) || (activeHandle == TrimHandle::none && hoverHandle == which);
+        const auto col = hot ? ConvoColours::mint : ConvoColours::teal.brighter (0.1f);
+
+        g.setColour (col.withAlpha (hot ? 0.95f : 0.8f));
+        g.drawLine (x, z.getY(), x, z.getBottom(), hot ? 2.0f : 1.4f);
+
+        // a small grab tab at top so the affordance reads as draggable
+        const float tab = 6.0f;
+        juce::Path p;
+        const float dir = pointsRight ? 1.0f : -1.0f;
+        p.startNewSubPath (x, z.getY());
+        p.lineTo (x + dir * tab, z.getY() + tab * 0.5f);
+        p.lineTo (x, z.getY() + tab);
+        p.closeSubPath();
+        g.setColour (col);
+        g.fillPath (p);
+    };
+
+    // Start tab points into the kept region (right); End tab points left
+    drawHandle (sx, TrimHandle::start, true);
+    drawHandle (ex, TrimHandle::end,   false);
+}
+
+void ConvoAudioProcessorEditor::mouseMove (const juce::MouseEvent& e)
+{
+    const auto h = trimHandleAt (e.getPosition());
+    if (h != hoverHandle)
+    {
+        hoverHandle = h;
+        setMouseCursor (h == TrimHandle::none ? juce::MouseCursor::NormalCursor
+                                              : juce::MouseCursor::LeftRightResizeCursor);
+        repaint (dropZone);
+    }
+}
+
+void ConvoAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
+{
+    activeHandle = trimHandleAt (e.getPosition());
+    if (activeHandle != TrimHandle::none)
+    {
+        const char* id = activeHandle == TrimHandle::start ? "irStart" : "irEnd";
+        if (auto* param = processor.getAPVTS().getParameter (id))
+            param->beginChangeGesture();
+        repaint (dropZone);
+    }
+}
+
+void ConvoAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
+{
+    if (activeHandle == TrimHandle::none)
+        return;
+
+    auto& a = processor.getAPVTS();
+    const float frac = trimXToFrac (e.getPosition().x);
+
+    // keep a minimum gap so the two handles can't cross (and the bake always has a region)
+    constexpr float minGap = 0.005f;
+    if (activeHandle == TrimHandle::start)
+    {
+        const float endFrac = a.getRawParameterValue ("irEnd")->load();
+        if (auto* p = a.getParameter ("irStart"))
+            p->setValueNotifyingHost (juce::jmin (frac, endFrac - minGap));
+    }
+    else
+    {
+        const float startFrac = a.getRawParameterValue ("irStart")->load();
+        if (auto* p = a.getParameter ("irEnd"))
+            p->setValueNotifyingHost (juce::jmax (frac, startFrac + minGap));
+    }
+    // params are 0..1 already, so the normalised value == the fraction; repaint the band
+    repaint (dropZone);
+}
+
+void ConvoAudioProcessorEditor::mouseUp (const juce::MouseEvent&)
+{
+    if (activeHandle != TrimHandle::none)
+    {
+        const char* id = activeHandle == TrimHandle::start ? "irStart" : "irEnd";
+        if (auto* param = processor.getAPVTS().getParameter (id))
+            param->endChangeGesture();
+        activeHandle = TrimHandle::none;
+        repaint (dropZone);
+    }
+}
+
 // Mode hints, polled at 30 Hz but only touched on a flip:
 //  - Bass Mono only does anything in Mid/Side mode, so dim it (interactive) while M/S is off.
 //  - In HP / In LP filter the input by default; when Filter IR is on they're baked into the IR
@@ -547,6 +701,7 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
             }
 
             drawFilterOverlay (g);   // EQ curve (tone + pre-IR HP/LP) + bass-mono marker
+            drawTrimHandles (g);     // dim the trimmed-off head/tail + draggable Start/End handles
         }
         else
         {
@@ -606,7 +761,14 @@ void ConvoAudioProcessorEditor::resized()
 
     auto inner  = dropZone.reduced (10);
     auto header = inner.removeFromTop (26);
+    // header row: [ file name .......... ] [Presets] [◀][▶]  [Load IR...]
     loadButton.setBounds (header.removeFromRight (92));
+    header.removeFromRight (10);
+    nextPresetButton.setBounds (header.removeFromRight (26));
+    header.removeFromRight (4);
+    prevPresetButton.setBounds (header.removeFromRight (26));
+    header.removeFromRight (4);
+    presetButton.setBounds (header.removeFromRight (74));
     header.removeFromRight (8);
     fileNameLabel.setBounds (header);
     inner.removeFromTop (6);
@@ -759,6 +921,17 @@ void ConvoAudioProcessorEditor::timerCallback()
         repaint (dropZone);
     }
 
+    // trim handles track Start/End (bake params): the bake re-windows via the processor's
+    // debounce, but move the handle graphics immediately when the params shift from any
+    // source (host automation, preset load, another editor) so the display stays in sync
+    const float ovStart = apvts.getRawParameterValue ("irStart")->load();
+    const float ovEnd   = apvts.getRawParameterValue ("irEnd")->load();
+    if (! juce::approximatelyEqual (ovStart, trimStartSeen) || ! juce::approximatelyEqual (ovEnd, trimEndSeen))
+    {
+        trimStartSeen = ovStart; trimEndSeen = ovEnd;
+        repaint (dropZone);
+    }
+
     // repaint a meter only when it visibly moved — an idle editor paints nothing
     auto moved = [] (float a, float b) { return std::abs (a - b) > 0.003f; };
     if (moved (inMeter, inShown) || moved (inPeak, inPeakShown))
@@ -809,4 +982,88 @@ void ConvoAudioProcessorEditor::openFileChooser()
         if (result.existsAsFile())
             loadFile (result);
     });
+}
+
+// ---------------------------------------------------------------------------
+// presets — APVTS state snapshots in Documents/Convo/Presets/*.xml
+// ---------------------------------------------------------------------------
+
+void ConvoAudioProcessorEditor::loadPresetFile (const juce::File& file)
+{
+    if (processor.loadPreset (file))
+    {
+        currentPresetFile = file;
+        // the IR (if any) was reloaded inside loadPreset; refresh the display
+        lastFileName = processor.getIRLibrary().getDisplayName();
+        fileNameLabel.setText (lastFileName, juce::dontSendNotification);
+        rebuildThumbnail();
+    }
+}
+
+void ConvoAudioProcessorEditor::stepPreset (int direction)
+{
+    const auto files = processor.getPresetFiles();
+    if (files.isEmpty())
+        return;
+
+    int index = files.indexOf (currentPresetFile);
+    if (index < 0)
+        index = direction > 0 ? -1 : 0;   // first ▶ lands on [0]; first ◀ wraps to the end
+
+    const int n = files.size();
+    index = ((index + direction) % n + n) % n;   // wrap both ends
+    loadPresetFile (files.getReference (index));
+}
+
+void ConvoAudioProcessorEditor::showPresetMenu()
+{
+    juce::PopupMenu menu;
+    menu.addItem (1, "Save current as preset...");
+    menu.addSeparator();
+
+    const auto files = processor.getPresetFiles();
+    if (files.isEmpty())
+    {
+        menu.addItem (2, "(no presets saved)", false, false);
+    }
+    else
+    {
+        for (int i = 0; i < files.size(); ++i)
+        {
+            const auto& f = files.getReference (i);
+            menu.addItem (100 + i, f.getFileNameWithoutExtension(),
+                          true, f == currentPresetFile);   // tick the active preset
+        }
+    }
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (presetButton),
+        [this, files] (int result)
+        {
+            if (result == 1)
+                promptSavePreset();
+            else if (result >= 100 && result - 100 < files.size())
+                loadPresetFile (files.getReference (result - 100));
+        });
+}
+
+void ConvoAudioProcessorEditor::promptSavePreset()
+{
+    savePresetWindow = std::make_unique<juce::AlertWindow> (
+        "Save Preset", "Name this preset:", juce::MessageBoxIconType::NoIcon);
+    savePresetWindow->addTextEditor ("name", "My Preset");
+    savePresetWindow->addButton ("Save",   1, juce::KeyPress (juce::KeyPress::returnKey));
+    savePresetWindow->addButton ("Cancel", 0, juce::KeyPress (juce::KeyPress::escapeKey));
+
+    savePresetWindow->enterModalState (true,
+        juce::ModalCallbackFunction::create ([this] (int result)
+        {
+            if (result == 1)
+            {
+                const auto name = savePresetWindow->getTextEditorContents ("name");
+                if (processor.savePreset (name))
+                    currentPresetFile = processor.getPresetsFolder()
+                                            .getChildFile (juce::File::createLegalFileName (name).trim() + ".xml");
+            }
+            savePresetWindow.reset();
+        }), false);
 }

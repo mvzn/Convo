@@ -9,6 +9,8 @@
     message thread; none of them touch the audio thread directly. */
 struct IRBakeParams
 {
+    float startFrac = 0.0f;    // trim the head: keep the IR from this fraction (0..1) of its length
+    float endFrac = 1.0f;      // trim the tail: keep the IR up to this fraction (0..1) of its length
     float fadeInMs = 0.0f;     // raised-cosine onset ramp
     float decaySeconds = 0.0f; // exponential tail decay (RT60-ish); ignored if decayOff
     bool  decayOff = true;     // true => use the IR's recorded decay unchanged
@@ -25,7 +27,9 @@ struct IRBakeParams
 
     bool operator== (const IRBakeParams& o) const noexcept
     {
-        return juce::approximatelyEqual (fadeInMs, o.fadeInMs)
+        return juce::approximatelyEqual (startFrac, o.startFrac)
+            && juce::approximatelyEqual (endFrac, o.endFrac)
+            && juce::approximatelyEqual (fadeInMs, o.fadeInMs)
             && juce::approximatelyEqual (decaySeconds, o.decaySeconds)
             && decayOff == o.decayOff
             && juce::approximatelyEqual (taperMs, o.taperMs)

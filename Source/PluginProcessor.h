@@ -53,6 +53,14 @@ public:
     IRLibrary& getIRLibrary() noexcept { return irLibrary; }
     juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return apvts; }
 
+    // --- presets (message thread) ---
+    // A preset is the plugin's APVTS state (the same XML getStateInformation writes,
+    // including the irPath property). Presets live as *.xml files in a Documents folder.
+    static juce::File getPresetsFolder();                       // created if missing
+    juce::Array<juce::File> getPresetFiles() const;             // sorted *.xml in the folder
+    bool savePreset (const juce::String& presetName);           // write current state -> <name>.xml
+    bool loadPreset (const juce::File& presetFile);             // restore state from a preset file
+
     float getInputLevel()  const noexcept { return inputLevel.load(); }
     float getOutputLevel() const noexcept { return outputLevel.load(); }
 
@@ -87,6 +95,8 @@ private:
     std::atomic<float>* widthParam    = nullptr;
     std::atomic<float>* duckParam     = nullptr;
     std::atomic<float>* duckRelParam  = nullptr;
+    std::atomic<float>* irStartParam  = nullptr;   // IR head trim (fraction of length)
+    std::atomic<float>* irEndParam    = nullptr;   // IR tail trim (fraction of length)
     std::atomic<float>* fadeInParam   = nullptr;
     std::atomic<float>* decayParam    = nullptr;
     std::atomic<float>* taperParam    = nullptr;
