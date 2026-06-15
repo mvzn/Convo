@@ -250,6 +250,7 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     wetCompTarget   = 1.0f;
     prevMsEncode    = false;
     prevFilterInput = true;
+    prevToneActive  = prevInHpActive = prevInLpActive = prevBassActive = prevPreDelayActive = true;
 
     inWork.setSize  ((int) spec.numChannels, maxSamples);
     wetWork.setSize ((int) spec.numChannels, maxSamples);
@@ -359,13 +360,16 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     {
         inHPSm.setTargetValue (inHPParam->load());
         inLPSm.setTargetValue (inLPParam->load());
-        *inputHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (
-            currentSampleRate, inHPSm.skip (numSamples));
-        *inputLP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass (
-            currentSampleRate, inLPSm.skip (numSamples));
+        const float hp = inHPSm.skip (numSamples);
+        const float lp = inLPSm.skip (numSamples);
+        // skip each filter while it sits at its flat extreme (20 Hz / 20 kHz); reset on re-engage
+        const bool hpActive = inHPSm.isSmoothing() || hp > 21.0f;
+        const bool lpActive = inLPSm.isSmoothing() || lp < 19900.0f;
+        if (hpActive != prevInHpActive) { if (hpActive) inputHP.reset(); prevInHpActive = hpActive; }
+        if (lpActive != prevInLpActive) { if (lpActive) inputLP.reset(); prevInLpActive = lpActive; }
         juce::dsp::ProcessContextReplacing<float> fctx (wetBlock);
-        inputHP.process (fctx);
-        inputLP.process (fctx);
+        if (hpActive) { *inputHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (currentSampleRate, hp); inputHP.process (fctx); }
+        if (lpActive) { *inputLP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass  (currentSampleRate, lp); inputLP.process (fctx); }
     }
     else
     {
@@ -387,13 +391,18 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         convo::msEncode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
 
         // bass-mono crossover: high-pass the side so content below the cutoff collapses to
-        // mono (the lows stay in the mid). 20 Hz = flat. Smoothed, first-order to match.
+        // mono (the lows stay in the mid). 20 Hz = flat -> skip the side filter entirely.
         msBassSm.setTargetValue (msBassParam->load());
-        *sideHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (
-            currentSampleRate, msBassSm.skip (numSamples));
-        auto sideBlock = wetBlock.getSingleChannelBlock (1);
-        juce::dsp::ProcessContextReplacing<float> sctx (sideBlock);
-        sideHP.process (sctx);
+        const float bassFc = msBassSm.skip (numSamples);
+        const bool bassActive = msBassSm.isSmoothing() || bassFc > 21.0f;
+        if (bassActive != prevBassActive) { if (bassActive) sideHP.reset(); prevBassActive = bassActive; }
+        if (bassActive)
+        {
+            *sideHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (currentSampleRate, bassFc);
+            auto sideBlock = wetBlock.getSingleChannelBlock (1);
+            juce::dsp::ProcessContextReplacing<float> sctx (sideBlock);
+            sideHP.process (sctx);
+        }
     }
     else
     {
@@ -411,15 +420,21 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     {
         toneSm.setTargetValue (toneParam->load());
         const float tonePct = toneSm.skip (numSamples) * 0.01f;     // -1..1
-        const float tiltDb  = tonePct * 12.0f;
-        *lowShelf.state  = juce::dsp::IIR::ArrayCoefficients<float>::makeLowShelf  (
-            currentSampleRate, 700.0f, 0.5f, juce::Decibels::decibelsToGain (-tiltDb));
-        *highShelf.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighShelf (
-            currentSampleRate, 700.0f, 0.5f, juce::Decibels::decibelsToGain ( tiltDb));
+        // tilt is flat at tone == 0 (unity shelves) -> skip both passes; reset on re-engage
+        const bool toneActive = toneSm.isSmoothing() || std::abs (tonePct) > 0.0005f;
+        if (toneActive != prevToneActive) { if (toneActive) { lowShelf.reset(); highShelf.reset(); } prevToneActive = toneActive; }
+        if (toneActive)
+        {
+            const float tiltDb = tonePct * 12.0f;
+            *lowShelf.state  = juce::dsp::IIR::ArrayCoefficients<float>::makeLowShelf  (
+                currentSampleRate, 700.0f, 0.5f, juce::Decibels::decibelsToGain (-tiltDb));
+            *highShelf.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighShelf (
+                currentSampleRate, 700.0f, 0.5f, juce::Decibels::decibelsToGain ( tiltDb));
 
-        juce::dsp::ProcessContextReplacing<float> wctx (wetBlock);
-        lowShelf.process (wctx);
-        highShelf.process (wctx);
+            juce::dsp::ProcessContextReplacing<float> wctx (wetBlock);
+            lowShelf.process (wctx);
+            highShelf.process (wctx);
+        }
     }
 
     // width (M/S) on the wet, smoothed per sample (stereo only). Skipped when steady at
@@ -451,18 +466,24 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         widthSm.skip (numSamples);
     }
 
-    // pre-delay on the wet (creative offset; not reported as latency)
+    // pre-delay on the wet (creative offset; not reported as latency). Skipped at ~0 ms
+    // (a no-op passthrough); the line is reset on re-engage so it can't pop stale samples.
     {
         const float pdSamps = juce::jlimit (0.0f, (float) (maxPreDelaySamples - 2),
                                             preDelayParam->load() * 0.001f * (float) currentSampleRate);
-        preDelayLine.setDelay (pdSamps);
-        for (int ch = 0; ch < numCh; ++ch)
+        const bool pdActive = pdSamps > 0.5f;
+        if (pdActive != prevPreDelayActive) { if (pdActive) preDelayLine.reset(); prevPreDelayActive = pdActive; }
+        if (pdActive)
         {
-            auto* w = wetWork.getWritePointer (ch);
-            for (int i = 0; i < numSamples; ++i)
+            preDelayLine.setDelay (pdSamps);
+            for (int ch = 0; ch < numCh; ++ch)
             {
-                preDelayLine.pushSample (ch, w[i]);
-                w[i] = preDelayLine.popSample (ch);
+                auto* w = wetWork.getWritePointer (ch);
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    preDelayLine.pushSample (ch, w[i]);
+                    w[i] = preDelayLine.popSample (ch);
+                }
             }
         }
     }

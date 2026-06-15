@@ -257,7 +257,8 @@ void ConvoAudioProcessorEditor::renderBackground()
     };
 
     panel (dropZone,    {});
-    panel (signalPanel, "SIGNAL");
+    panel (prePanel,    "PRE");
+    panel (postPanel,   "POST");
     panel (duckPanel,   "DUCKING");
     panel (shapePanel,  "IR SHAPE");
 
@@ -416,6 +417,35 @@ void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
     }
 }
 
+// Dim (grey out) a knob + its label to ~half alpha when its control sits at a no-op value,
+// while keeping it interactive so grabbing it brings it back. Alpha is only touched when the
+// state flips, so the 30 Hz poll is near-free. Thresholds match the DSP-skip in processBlock.
+void ConvoAudioProcessorEditor::updateKnobStates()
+{
+    auto& a = processor.getAPVTS();
+    auto val = [&a] (const char* id) { return a.getRawParameterValue (id)->load(); };
+    const bool msOn = val ("ms") > 0.5f;
+
+    auto dim = [] (juce::Slider& s, juce::Label& l, bool active)
+    {
+        const float t = active ? 1.0f : 0.45f;
+        if (! juce::approximatelyEqual (s.getAlpha(), t)) { s.setAlpha (t); l.setAlpha (t); }
+    };
+
+    dim (irGainSlider,   irGainLabel,   std::abs (val ("irGain")) > 0.05f);
+    dim (toneSlider,     toneLabel,     std::abs (val ("tone"))   > 0.05f);
+    dim (inHPSlider,     inHPLabel,     val ("inHP") > 21.0f);
+    dim (inLPSlider,     inLPLabel,     val ("inLP") < 19900.0f);
+    dim (preDelaySlider, preDelayLabel, val ("preDelay") > 0.05f);
+    dim (widthSlider,    widthLabel,    std::abs (val ("width") - 100.0f) > 0.5f);
+    dim (msBassSlider,   msBassLabel,   msOn && val ("msBass") > 21.0f);   // only does anything in M/S
+    dim (duckSlider,     duckLabel,     val ("duck") > 0.5f);
+    dim (duckRelSlider,  duckRelLabel,  val ("duck") > 0.5f);              // release only matters while ducking
+    dim (fadeInSlider,   fadeInLabel,   val ("fadeIn") > 0.5f);
+    dim (decaySlider,    decayLabel,    val ("decay") < ConvoAudioProcessor::kDecayOffMs - 0.5f);
+    dim (taperSlider,    taperLabel,    val ("taper") > 0.5f);
+}
+
 void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
 {
     if (backgroundImage.isValid())
@@ -505,7 +535,10 @@ void ConvoAudioProcessorEditor::resized()
     waveZone = inner;
 
     area.removeFromTop (12);
-    signalPanel = area.removeFromTop (170);
+    auto row1 = area.removeFromTop (170);
+    prePanel  = row1.removeFromLeft (140);   // PRE: pre-convolution real-time (Bass Mono)
+    row1.removeFromLeft (10);
+    postPanel = row1;                         // POST: post-conv shaping + mix
     area.removeFromTop (10);
     auto row2 = area.removeFromTop (170);
     duckPanel = row2.removeFromLeft (188);   // smaller — just the two ducking knobs
@@ -525,16 +558,18 @@ void ConvoAudioProcessorEditor::resized()
         return r;
     };
 
-    {   // SIGNAL — real-time mix / tone / stereo (everything that doesn't re-bake the IR)
-        auto row = knobArea (signalPanel);
-        const int cellW = row.getWidth() / 7;
+    {   // PRE — pre-convolution real-time (Bass Mono; In HP/In LP live in IR SHAPE)
+        placeKnob (knobArea (prePanel), msBassSlider, msBassLabel);
+    }
+    {   // POST — post-convolution shaping + final mix
+        auto row = knobArea (postPanel);
+        const int cellW = row.getWidth() / 6;
+        placeKnob (row.removeFromLeft (cellW), toneSlider,     toneLabel);
+        placeKnob (row.removeFromLeft (cellW), widthSlider,    widthLabel);
+        placeKnob (row.removeFromLeft (cellW), preDelaySlider, preDelayLabel);
         placeKnob (row.removeFromLeft (cellW), drySlider,      dryLabel);
         placeKnob (row.removeFromLeft (cellW), wetSlider,      wetLabel);
         placeKnob (row.removeFromLeft (cellW), outputSlider,   outputLabel);
-        placeKnob (row.removeFromLeft (cellW), toneSlider,     toneLabel);
-        placeKnob (row.removeFromLeft (cellW), preDelaySlider, preDelayLabel);
-        placeKnob (row.removeFromLeft (cellW), widthSlider,    widthLabel);
-        placeKnob (row.removeFromLeft (cellW), msBassSlider,   msBassLabel);
     }
     {
         auto row = knobArea (duckPanel);
@@ -624,6 +659,8 @@ void ConvoAudioProcessorEditor::timerCallback()
 
     if (processor.getBakeGeneration() != lastBakeGen)
         rebuildThumbnail();
+
+    updateKnobStates();   // grey out knobs sitting at a no-op value
 
     // the EQ overlay tracks tone + pre-IR HP/LP + bass-mono, which are not bake params,
     // so poll them and repaint the wave layer only when one actually moves

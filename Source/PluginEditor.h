@@ -45,6 +45,7 @@ private:
                         const juce::ColourGradient& fill);
     void renderOverlay();              // (re)build the cached EQ curve + bass-mono marker on param/size change
     void drawFilterOverlay (juce::Graphics&);   // stroke the cached overlay over the wave (no recompute)
+    void updateKnobStates();           // dim (grey out) knobs sitting at a no-op value
     float uiScale() const;             // physical px per logical px, for crisp caches
 
     ConvoAudioProcessor& processor;
@@ -106,7 +107,7 @@ private:
 
     // layout regions (used by paint)
     juce::Rectangle<int> headerZone, dropZone, waveZone, inMeterZone, outMeterZone,
-                         signalPanel, duckPanel, shapePanel;
+                         prePanel, postPanel, duckPanel, shapePanel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessorEditor)
 };

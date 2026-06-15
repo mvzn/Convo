@@ -122,6 +122,10 @@ private:
     float  wetCompTarget = 1.0f;   // wet-comp ratio held across blocks (frozen while input is quiet)
     bool   prevMsEncode  = false;  // audio-thread edge detect: reset the side filter on M/S engage
     bool   prevFilterInput = true; // audio-thread edge detect: reset input filters when re-engaged
+    // neutral-stage skip edge detect: reset the filter/delay on re-engage so the resumed block
+    // starts clean (each stage is skipped while its control sits at a no-op value)
+    bool   prevToneActive = true, prevInHpActive = true, prevInLpActive = true,
+           prevBassActive = true, prevPreDelayActive = true;
 
     std::atomic<int>   dryDelaySamples { 0 };        // engine latency published on load (message thread)
     std::atomic<bool>  loadFadePending { false };    // trigger the click-masking output fade
