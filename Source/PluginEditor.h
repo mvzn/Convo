@@ -41,7 +41,10 @@ private:
 
     void renderBackground();           // static chrome -> backgroundImage
     void renderWaveImage();            // baked-IR waveform -> waveImage
-    void drawMeterFill (juce::Graphics&, juce::Rectangle<int> zone, float level, float peak);
+    void drawMeterFill (juce::Graphics&, juce::Rectangle<int> zone, float level, float peak,
+                        const juce::ColourGradient& fill);
+    void renderOverlay();              // (re)build the cached EQ curve + bass-mono marker on param/size change
+    void drawFilterOverlay (juce::Graphics&);   // stroke the cached overlay over the wave (no recompute)
     float uiScale() const;             // physical px per logical px, for crisp caches
 
     ConvoAudioProcessor& processor;
@@ -51,13 +54,16 @@ private:
     // IR display (shows the *processed* IR)
     juce::AudioFormatManager  thumbnailFormatManager;
     juce::AudioThumbnailCache thumbnailCache { 4 };
-    juce::AudioThumbnail      thumbnail { 512, thumbnailFormatManager, thumbnailCache };
+    // rebuilt per IR with a length-adaptive resolution (see rebuildThumbnail) so short,
+    // heavily-decayed IRs don't render as a handful of wide min/max bricks
+    std::unique_ptr<juce::AudioThumbnail> thumbnail;
     juce::Label               fileNameLabel;
     juce::TextButton          loadButton { "Load IR..." };
     juce::String              lastFileName;
     int                       lastBakeGen = -1;
     bool                      fileOver = false;
     double                    bakedLenSeconds = 0.0;
+    juce::String              bakedLenText;          // cached "N.NN s" label (no per-paint String build)
 
     // parameter controls
     juce::Slider drySlider, wetSlider, irGainSlider, outputSlider, toneSlider, inHPSlider, inLPSlider,
@@ -81,6 +87,17 @@ private:
     float inMeter = 0.0f, outMeter = 0.0f;
     float inPeak  = 0.0f, outPeak  = 0.0f;
     float inShown = -1.0f, outShown = -1.0f, inPeakShown = -1.0f, outPeakShown = -1.0f;
+
+    // last-seen values of the overlay params (tone / In HP / In LP / Bass Mono / M/S) so the
+    // timer can repaint the wave layer when they move — they are not bake params
+    float eqToneSeen = -1.0e9f, eqHpSeen = -1.0e9f, eqLpSeen = -1.0e9f, eqBassSeen = -1.0e9f;
+    bool  eqMsSeen = false;
+
+    // cached overlay: rebuilt only when its params/size change, then just stroked in paint
+    juce::Path eqCurvePath;
+    float      monoMarkerX = -1.0f;    // bass-mono marker x in waveZone coords; < 0 = hidden
+    juce::dsp::IIR::Coefficients<float>::Ptr eqLo, eqHi, eqHp, eqLp;  // reused -> no per-redraw alloc
+    juce::ColourGradient inMeterGrad, outMeterGrad;   // cached -> no per-frame gradient alloc
 
     std::unique_ptr<juce::FileChooser> chooser;
 

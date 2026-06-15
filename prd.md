@@ -21,7 +21,7 @@ Real-time, automatable controls (act on the live signal):
 - **Bypass** — click-free; wired to the host bypass (`getBypassParameter`).
 
 IR-bake controls (recompute the windowed IR on the message thread; not automation-grade):
-- **Fade-In** — raised-cosine onset ramp on the IR. 0…1000 ms, default 0 ms.
+- **Fade-In** — raised-cosine onset ramp on the IR. 0…10000 ms, default 0 ms; the ramp length is capped at 80% of the IR so the longest fade still leaves a fifth of the IR at full level.
 - **Decay** — exponential decay imposed on the IR tail; truncates at −60 dB. 50 ms…10 s, top = **Off** (use IR as recorded), default Off.
 - **Tail-Taper** — raised-cosine ramp to zero over the last N ms before the truncation point (de-click). 0…500 ms, default 10 ms.
 - **Reverse** — reverse the IR before windowing (reverse-reverb). On/off, default off.
@@ -43,7 +43,7 @@ Level, routing & safety controls:
 - **Wet signal chain (audio thread):** `input HP/LP (when filtering input) → M/S encode? (+ side high-pass for Bass Mono) → convolution → M/S decode? → tone (tilt) → width (M/S) → pre-delay`, then mixed as `wet × IR Gain × Wet Comp × Wet × duck`, summed with `dry × Dry`, then × Output, then the (gain-blended) Clip Guard soft-clip. The input HP/LP filters the wet source only — the dry tap is never filtered.
 - **Click masking:** a short (~15 ms) output fade on every IR load and on routing toggles (Mid-Side, Filter-IR) masks the kernel swap, engine switch, and dry-delay jump. Filters reset on re-engage and the Clip Guard is gain-blended, so toggles stay click-free.
 - **Metering:** IN and OUT level meters (OUT flags clipping at the ceiling).
-- **GUI:** the IR display shows the **processed (baked)** IR — fade-in/decay/taper/reverse are visible in the waveform, redrawn on each bake.
+- **GUI:** the IR display shows the **processed (baked)** IR — fade-in/decay/taper/reverse are visible in the waveform, redrawn on each bake. An overlay draws the wet path's EQ response (Tone tilt + In HP/In LP) as a log 20 Hz–20 kHz curve, plus a dotted Bass-Mono crossover marker (Mid/Side only); these track their (non-bake) params live via the 30 Hz timer.
 - **State:** APVTS save/restore plus the IR file path; reloads the IR (and re-bakes) on session recall.
 - **Buses:** mono or stereo; input channel set must equal output. No allocations or locks on the audio thread.
 

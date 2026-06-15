@@ -22,7 +22,7 @@ musical shaping controls.
 | Width | 0…200 % | 100 % | M/S stereo width of the wet |
 | Duck | 0…100 % | 0 | Ducks the wet under the live dry envelope |
 | Duck Release | 20…1000 ms | 200 ms | Ducking recovery time |
-| Fade-In | 0…1000 ms | 0 ms | Onset ramp baked into the IR |
+| Fade-In | 0…10000 ms | 0 ms | Onset ramp baked into the IR (capped at 80% of the IR length) |
 | Decay | 50 ms…Off | Off | Exponential decay imposed on the IR tail |
 | Tail-Taper | 0…500 ms | 10 ms | De-click ramp at the IR's end |
 | Bass Mono | 20…500 Hz | 20 Hz | Mid/Side only: high-pass the side so lows go mono (20 = off) |
@@ -52,16 +52,22 @@ musical shaping controls.
 - **Adaptive Wet Comp (default on):** trims the wet in real time so its loudness tracks the dry
   input, holding the gain while the input is quiet so reverb tails ring out instead of pumping.
 - **Clip Guard (default on):** a soft-clip ceiling on the output that's transparent below −2.5 dBFS.
-- The IR display shows the **processed** IR, so the shaping knobs are visible in the waveform.
+- The IR display shows the **processed** IR, so the shaping knobs are visible in the waveform. Overlaid on it is the wet path's EQ response (Tone tilt + In HP/In LP) drawn as a 20 Hz–20 kHz log curve, plus a dotted vertical marker at the Bass-Mono crossover.
 
 ## Build
 
 ```sh
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
+cmake -B build          # defaults to Release
+cmake --build build
 ```
 
-JUCE 8.0.6 is fetched automatically (pinned). The VST3 is built on all platforms; AU on macOS.
+JUCE 8.0.6 is fetched automatically (pinned). The VST3 is built on all platforms; AU on macOS,
+and `COPY_PLUGIN_AFTER_BUILD` installs it to your user plugin folder.
+
+**Use Release for real use.** A fresh configure defaults to Release; a Debug build is *much*
+slower and stutters/drops out on long (multi-second) IRs — it's for debugging only. For a
+debuggable but real-time-capable build use `-DCMAKE_BUILD_TYPE=RelWithDebInfo`; for full Debug,
+`-DCMAKE_BUILD_TYPE=Debug` (don't leave that one installed).
 
 ## License
 

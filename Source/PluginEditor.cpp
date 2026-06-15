@@ -27,7 +27,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setOpaque (true);                       // paint() covers everything — skip host compositing
 
     thumbnailFormatManager.registerBasicFormats();
-    thumbnail.addChangeListener (this);
+    thumbnail = std::make_unique<juce::AudioThumbnail> (512, thumbnailFormatManager, thumbnailCache);
+    thumbnail->addChangeListener (this);
 
     auto& apvts = processor.getAPVTS();
 
@@ -72,6 +73,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
                                "so tails ring out");
     inHPSlider.setTooltip ("Pre-IR high-pass (low cut), 6 dB/oct, on the signal feeding the IR");
     inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 6 dB/oct, on the signal feeding the IR");
+    fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp is capped at 80% of the IR length");
     msButton.setTooltip   ("Mid/Side: convolve mid-with-mid and side-with-side (re-bakes the "
                            "IR as M/S). Wants a stereo IR — a mono IR collapses to mono");
     msBassSlider.setTooltip ("Bass Mono (Mid/Side only): high-passes the side so content below "
@@ -128,7 +130,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 ConvoAudioProcessorEditor::~ConvoAudioProcessorEditor()
 {
     stopTimer();
-    thumbnail.removeChangeListener (this);
+    thumbnail->removeChangeListener (this);
     setLookAndFeel (nullptr);
 }
 
@@ -146,14 +148,23 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
 
     if (ir.getNumSamples() > 0 && sr > 0.0)
     {
-        thumbnail.reset (ir.getNumChannels(), sr, ir.getNumSamples());
-        thumbnail.addBlock (0, ir, 0, ir.getNumSamples());
-        bakedLenSeconds = ir.getNumSamples() / sr;
+        const int n = ir.getNumSamples();
+        // ~one thumbnail point per output pixel (1400 ≈ the display width at 2x HiDPI), so
+        // a short IR still gets enough points to draw smoothly rather than as wide bricks.
+        const int srcPerPoint = juce::jmax (1, n / 1400);
+        thumbnail->removeChangeListener (this);
+        thumbnail = std::make_unique<juce::AudioThumbnail> (srcPerPoint, thumbnailFormatManager, thumbnailCache);
+        thumbnail->addChangeListener (this);
+        thumbnail->reset (ir.getNumChannels(), sr, n);
+        thumbnail->addBlock (0, ir, 0, n);
+        bakedLenSeconds = n / sr;
+        bakedLenText = juce::String (bakedLenSeconds, 2) + " s";
     }
     else
     {
-        thumbnail.clear();
+        thumbnail->clear();
         bakedLenSeconds = 0.0;
+        bakedLenText.clear();
     }
 
     lastBakeGen = processor.getBakeGeneration();
@@ -168,7 +179,7 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
 void ConvoAudioProcessorEditor::renderWaveImage()
 {
     waveImage = juce::Image();
-    if (waveZone.isEmpty() || thumbnail.getTotalLength() <= 0.0)
+    if (waveZone.isEmpty() || thumbnail->getTotalLength() <= 0.0)
         return;
 
     const float scale = uiScale();
@@ -183,7 +194,7 @@ void ConvoAudioProcessorEditor::renderWaveImage()
     g.setGradientFill (juce::ColourGradient (ConvoColours::mint, 0.0f, 0.0f,
                                              ConvoColours::teal.withAlpha (0.75f),
                                              0.0f, (float) local.getHeight(), false));
-    thumbnail.drawChannels (g, local, 0.0, thumbnail.getTotalLength(), 1.0f);
+    thumbnail->drawChannels (g, local, 0.0, thumbnail->getTotalLength(), 1.0f);
 }
 
 void ConvoAudioProcessorEditor::renderBackground()
@@ -276,21 +287,16 @@ void ConvoAudioProcessorEditor::renderBackground()
 // ---------------------------------------------------------------------------
 
 void ConvoAudioProcessorEditor::drawMeterFill (juce::Graphics& g, juce::Rectangle<int> zone,
-                                               float level, float peak)
+                                               float level, float peak, const juce::ColourGradient& fillGrad)
 {
     const auto well = zone.toFloat().reduced (1.5f);
 
     const float l = juce::jlimit (0.0f, 1.0f, level);
     if (l > 0.001f)
     {
-        // the gradient spans the whole well, so colours map to absolute level:
-        // phthalo low, mint mid, amber hot, red at the top
-        juce::ColourGradient grad (ConvoColours::accent, well.getX(), well.getBottom(),
-                                   ConvoColours::clip,   well.getX(), well.getY(), false);
-        grad.addColour (0.55, ConvoColours::mint);
-        grad.addColour (0.85, meterAmber);
-        g.setGradientFill (grad);
-
+        // gradient (phthalo low, mint mid, amber hot, red top) is cached in resized() so the
+        // meter — repainted ~30 Hz throughout playback — never reallocates a ColourGradient
+        g.setGradientFill (fillGrad);
         auto fill = well;
         g.fillRoundedRectangle (fill.removeFromBottom (well.getHeight() * l), 2.0f);
     }
@@ -301,6 +307,104 @@ void ConvoAudioProcessorEditor::drawMeterFill (juce::Graphics& g, juce::Rectangl
         const float y = well.getBottom() - well.getHeight() * p;
         g.setColour (p > 0.95f ? ConvoColours::clip : ConvoColours::mint.brighter (0.3f));
         g.fillRect (well.getX(), y - 1.0f, well.getWidth(), 2.0f);
+    }
+}
+
+// (Re)build the cached frequency-response overlay: the display width is a log 20 Hz -> 20 kHz
+// axis and the curve is the net magnitude of the wet EQ — Tone tilt (post-conv) times the
+// pre-IR HP/LP. Called only when those params (or the wave zone) change, so paint() never
+// recomputes it. The four Coefficients are reused (updated in place) — no per-redraw alloc.
+void ConvoAudioProcessorEditor::renderOverlay()
+{
+    eqCurvePath.clear();
+    monoMarkerX = -1.0f;
+
+    const auto zone = waveZone.toFloat();
+    if (zone.isEmpty())
+        return;
+
+    auto& apvts = processor.getAPVTS();
+    const double sr = processor.getSampleRate() > 0.0 ? processor.getSampleRate() : 48000.0;
+
+    const float tiltDb = apvts.getRawParameterValue ("tone")->load() * 0.01f * 12.0f;   // matches processBlock
+    const float hpHz   = apvts.getRawParameterValue ("inHP")->load();
+    const float lpHz   = apvts.getRawParameterValue ("inLP")->load();
+
+    if (eqLo == nullptr)   // allocate the reused coefficient objects once
+    {
+        eqLo = juce::dsp::IIR::Coefficients<float>::makeLowShelf  (sr, 700.0, 0.5, 1.0f);
+        eqHi = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, 700.0, 0.5, 1.0f);
+        eqHp = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass (sr, 20.0);
+        eqLp = juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowPass  (sr, 20000.0);
+    }
+    *eqLo = juce::dsp::IIR::ArrayCoefficients<float>::makeLowShelf  (sr, 700.0, 0.5, juce::Decibels::decibelsToGain (-tiltDb));
+    *eqHi = juce::dsp::IIR::ArrayCoefficients<float>::makeHighShelf (sr, 700.0, 0.5, juce::Decibels::decibelsToGain ( tiltDb));
+    *eqHp = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (sr, (double) hpHz);
+    *eqLp = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass  (sr, (double) lpHz);
+
+    constexpr double fLo = 20.0, fHi = 20000.0;
+    constexpr float  dbSpan = 15.0f;                 // +/- this maps to half the zone height
+    const float halfH = zone.getHeight() * 0.5f - 4.0f;
+    const float midY  = zone.getCentreY();
+    const int   cols  = juce::jmax (2, (int) zone.getWidth());   // one point per pixel -> stays sharp
+
+    for (int i = 0; i <= cols; ++i)
+    {
+        const double t   = (double) i / (double) cols;
+        const double f   = fLo * std::pow (fHi / fLo, t);
+        const double mag = eqLo->getMagnitudeForFrequency (f, sr) * eqHi->getMagnitudeForFrequency (f, sr)
+                         * eqHp->getMagnitudeForFrequency (f, sr) * eqLp->getMagnitudeForFrequency (f, sr);
+        const float db = (float) juce::Decibels::gainToDecibels (mag, -100.0);
+        const float x  = zone.getX() + (float) t * zone.getWidth();
+        const float y  = midY - juce::jlimit (-1.0f, 1.0f, db / dbSpan) * halfH;
+        if (i == 0) eqCurvePath.startNewSubPath (x, y);
+        else        eqCurvePath.lineTo (x, y);
+    }
+
+    if (apvts.getRawParameterValue ("ms")->load() > 0.5f)   // bass-mono marker (Mid/Side only)
+    {
+        const float bass = apvts.getRawParameterValue ("msBass")->load();
+        if (bass > 21.0f)
+        {
+            const double tt = std::log (bass / fLo) / std::log (fHi / fLo);
+            monoMarkerX = zone.getX() + (float) juce::jlimit (0.0, 1.0, tt) * zone.getWidth();
+        }
+    }
+}
+
+// Stroke the cached overlay — no recompute. Mint glow curve + copper bass-mono marker.
+void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
+{
+    if (eqCurvePath.isEmpty())
+        return;
+
+    const auto curveCol = ConvoColours::mint;
+    g.setColour (curveCol.withAlpha (0.08f));
+    g.strokePath (eqCurvePath, juce::PathStrokeType (5.0f, juce::PathStrokeType::curved));
+    g.setColour (curveCol.withAlpha (0.14f));
+    g.strokePath (eqCurvePath, juce::PathStrokeType (3.0f, juce::PathStrokeType::curved));
+    g.setColour (curveCol.withAlpha (0.5f));
+    g.strokePath (eqCurvePath, juce::PathStrokeType (1.4f, juce::PathStrokeType::curved));
+
+    if (monoMarkerX >= 0.0f)
+    {
+        const auto zone = waveZone.toFloat();
+        const juce::Line<float> vline (monoMarkerX, zone.getY(), monoMarkerX, zone.getBottom());
+        const auto monoCol = ConvoColours::copper;
+
+        g.setColour (monoCol.withAlpha (0.08f)); g.drawLine (vline, 5.0f);
+        g.setColour (monoCol.withAlpha (0.14f)); g.drawLine (vline, 3.0f);
+        const float dashes[] = { 3.0f, 3.0f };
+        g.setColour (monoCol.withAlpha (0.5f));  g.drawDashedLine (vline, dashes, 2, 1.0f);
+
+        if (monoMarkerX - zone.getX() > 34.0f)   // enough mono region to label
+        {
+            g.setColour (monoCol.withAlpha (0.75f));
+            g.setFont (captionFont());
+            g.drawText ("mono", juce::Rectangle<float> (zone.getX(), zone.getBottom() - 16.0f,
+                                                        monoMarkerX - zone.getX() - 5.0f, 14.0f),
+                        juce::Justification::centredRight);
+        }
     }
 }
 
@@ -319,13 +423,14 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
         {
             g.drawImage (waveImage, waveZone.toFloat());
 
-            if (bakedLenSeconds > 0.0)
+            if (bakedLenText.isNotEmpty())
             {
                 g.setColour (ConvoColours::textDim);
                 g.setFont (juce::Font (juce::FontOptions (11.5f)));
-                g.drawText (juce::String (bakedLenSeconds, 2) + " s",
-                            waveZone.reduced (6, 4), juce::Justification::bottomRight);
+                g.drawText (bakedLenText, waveZone.reduced (6, 4), juce::Justification::bottomRight);
             }
+
+            drawFilterOverlay (g);   // EQ curve (tone + pre-IR HP/LP) + bass-mono marker
         }
         else
         {
@@ -344,9 +449,9 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
     }
 
     if (clip.intersects (inMeterZone))
-        drawMeterFill (g, inMeterZone, inMeter, inPeak);
+        drawMeterFill (g, inMeterZone, inMeter, inPeak, inMeterGrad);
     if (clip.intersects (outMeterZone))
-        drawMeterFill (g, outMeterZone, outMeter, outPeak);
+        drawMeterFill (g, outMeterZone, outMeter, outPeak, outMeterGrad);
 }
 
 void ConvoAudioProcessorEditor::resized()
@@ -371,6 +476,19 @@ void ConvoAudioProcessorEditor::resized()
     outMeterZone = outCol.withTrimmedBottom (16);   // labels live below the wells
     inMeterZone  = inCol.withTrimmedBottom (16);
     dropZone = topRow;
+
+    // cache the meter fill gradient per zone so paint() never allocates one (see drawMeterFill)
+    auto meterGrad = [] (juce::Rectangle<int> z)
+    {
+        const auto well = z.toFloat().reduced (1.5f);
+        juce::ColourGradient grad (ConvoColours::accent, well.getX(), well.getBottom(),
+                                   ConvoColours::clip,   well.getX(), well.getY(), false);
+        grad.addColour (0.55, ConvoColours::mint);
+        grad.addColour (0.85, meterAmber);
+        return grad;
+    };
+    inMeterGrad  = meterGrad (inMeterZone);
+    outMeterGrad = meterGrad (outMeterZone);
 
     auto inner  = dropZone.reduced (10);
     auto header = inner.removeFromTop (26);
@@ -438,6 +556,7 @@ void ConvoAudioProcessorEditor::resized()
 
     renderBackground();
     renderWaveImage();
+    renderOverlay();
 }
 
 bool ConvoAudioProcessorEditor::isInterestedInFileDrag (const juce::StringArray& files)
@@ -497,6 +616,23 @@ void ConvoAudioProcessorEditor::timerCallback()
 
     if (processor.getBakeGeneration() != lastBakeGen)
         rebuildThumbnail();
+
+    // the EQ overlay tracks tone + pre-IR HP/LP + bass-mono, which are not bake params,
+    // so poll them and repaint the wave layer only when one actually moves
+    auto& apvts = processor.getAPVTS();
+    const float ovTone = apvts.getRawParameterValue ("tone")->load();
+    const float ovHp   = apvts.getRawParameterValue ("inHP")->load();
+    const float ovLp   = apvts.getRawParameterValue ("inLP")->load();
+    const float ovBass = apvts.getRawParameterValue ("msBass")->load();
+    const bool  ovMs   = apvts.getRawParameterValue ("ms")->load() > 0.5f;
+    if (! juce::approximatelyEqual (ovTone, eqToneSeen) || ! juce::approximatelyEqual (ovHp, eqHpSeen)
+        || ! juce::approximatelyEqual (ovLp, eqLpSeen) || ! juce::approximatelyEqual (ovBass, eqBassSeen)
+        || ovMs != eqMsSeen)
+    {
+        eqToneSeen = ovTone; eqHpSeen = ovHp; eqLpSeen = ovLp; eqBassSeen = ovBass; eqMsSeen = ovMs;
+        renderOverlay();        // rebuild the cached curve once per change, not in paint
+        repaint (dropZone);
+    }
 
     // repaint a meter only when it visibly moved — an idle editor paints nothing
     auto moved = [] (float a, float b) { return std::abs (a - b) > 0.003f; };
