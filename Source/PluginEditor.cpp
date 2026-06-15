@@ -392,18 +392,26 @@ void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
         const juce::Line<float> vline (monoMarkerX, zone.getY(), monoMarkerX, zone.getBottom());
         const auto monoCol = ConvoColours::copper;
 
-        g.setColour (monoCol.withAlpha (0.08f)); g.drawLine (vline, 5.0f);
-        g.setColour (monoCol.withAlpha (0.14f)); g.drawLine (vline, 3.0f);
+        g.setColour (monoCol.withAlpha (0.10f)); g.drawLine (vline, 3.0f);   // tight glow
+        g.setColour (monoCol.withAlpha (0.16f)); g.drawLine (vline, 2.0f);
         const float dashes[] = { 3.0f, 3.0f };
         g.setColour (monoCol.withAlpha (0.5f));  g.drawDashedLine (vline, dashes, 2, 1.0f);
 
-        if (monoMarkerX - zone.getX() > 34.0f)   // enough mono region to label
+        // label the two sides of the crossover: mono below, stereo above
+        g.setFont (captionFont());
+        if (monoMarkerX - zone.getX() > 34.0f)
         {
             g.setColour (monoCol.withAlpha (0.75f));
-            g.setFont (captionFont());
             g.drawText ("mono", juce::Rectangle<float> (zone.getX(), zone.getBottom() - 16.0f,
                                                         monoMarkerX - zone.getX() - 5.0f, 14.0f),
                         juce::Justification::centredRight);
+        }
+        if (zone.getRight() - monoMarkerX > 40.0f)
+        {
+            g.setColour (ConvoColours::mint.withAlpha (0.7f));   // mint = the stereo/wide side
+            g.drawText ("stereo", juce::Rectangle<float> (monoMarkerX + 5.0f, zone.getBottom() - 16.0f,
+                                                          zone.getRight() - monoMarkerX - 7.0f, 14.0f),
+                        juce::Justification::centredLeft);
         }
     }
 }
@@ -464,9 +472,7 @@ void ConvoAudioProcessorEditor::resized()
     clipGuardButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
     headerZone.removeFromRight (8);
     wetCompButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
-    headerZone.removeFromRight (8);
-    msButton.setBounds (headerZone.removeFromRight (104).withSizeKeepingCentre (104, 26));
-    area.removeFromTop (8);
+    area.removeFromTop (8);                                   // Mid/Side now lives in IR SHAPE (it's a bake param)
 
     auto topRow = area.removeFromTop (168);
     auto outCol = topRow.removeFromRight (26);
@@ -502,9 +508,9 @@ void ConvoAudioProcessorEditor::resized()
     signalPanel = area.removeFromTop (170);
     area.removeFromTop (10);
     auto row2 = area.removeFromTop (170);
-    duckPanel = row2.removeFromLeft ((row2.getWidth() - 10) * 2 / 6);
+    duckPanel = row2.removeFromLeft (188);   // smaller — just the two ducking knobs
     row2.removeFromLeft (10);
-    shapePanel = row2;
+    shapePanel = row2;                        // IR SHAPE gets the rest (bake controls + IR Gain)
 
     auto placeKnob = [] (juce::Rectangle<int> cell, juce::Slider& s, juce::Label& l)
     {
@@ -519,16 +525,13 @@ void ConvoAudioProcessorEditor::resized()
         return r;
     };
 
-    {
+    {   // SIGNAL — real-time mix / tone / stereo (everything that doesn't re-bake the IR)
         auto row = knobArea (signalPanel);
-        const int cellW = row.getWidth() / 10;
+        const int cellW = row.getWidth() / 7;
         placeKnob (row.removeFromLeft (cellW), drySlider,      dryLabel);
         placeKnob (row.removeFromLeft (cellW), wetSlider,      wetLabel);
-        placeKnob (row.removeFromLeft (cellW), irGainSlider,   irGainLabel);
         placeKnob (row.removeFromLeft (cellW), outputSlider,   outputLabel);
         placeKnob (row.removeFromLeft (cellW), toneSlider,     toneLabel);
-        placeKnob (row.removeFromLeft (cellW), inHPSlider,     inHPLabel);
-        placeKnob (row.removeFromLeft (cellW), inLPSlider,     inLPLabel);
         placeKnob (row.removeFromLeft (cellW), preDelaySlider, preDelayLabel);
         placeKnob (row.removeFromLeft (cellW), widthSlider,    widthLabel);
         placeKnob (row.removeFromLeft (cellW), msBassSlider,   msBassLabel);
@@ -539,19 +542,24 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (row.removeFromLeft (cellW), duckSlider,    duckLabel);
         placeKnob (row.removeFromLeft (cellW), duckRelSlider, duckRelLabel);
     }
-    {
+    {   // IR SHAPE — everything that changes the IR bake, plus IR Gain
         auto row = knobArea (shapePanel);
-        const int cellW = row.getWidth() / 4;
+        const int cellW = row.getWidth() / 7;     // 6 knobs + a toggle column
+        placeKnob (row.removeFromLeft (cellW), irGainSlider, irGainLabel);
+        placeKnob (row.removeFromLeft (cellW), inHPSlider,   inHPLabel);
+        placeKnob (row.removeFromLeft (cellW), inLPSlider,   inLPLabel);
         placeKnob (row.removeFromLeft (cellW), fadeInSlider, fadeInLabel);
         placeKnob (row.removeFromLeft (cellW), decaySlider,  decayLabel);
         placeKnob (row.removeFromLeft (cellW), taperSlider,  taperLabel);
         auto cell = row.removeFromLeft (cellW);
-        auto toggles = cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 8, 110), 28 * 3 + 16);
+        auto toggles = cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 6, 104), 28 * 4 + 6 * 3);
         reverseButton.setBounds  (toggles.removeFromTop (28));
-        toggles.removeFromTop (8);
+        toggles.removeFromTop (6);
         rawLevelButton.setBounds (toggles.removeFromTop (28));
-        toggles.removeFromTop (8);
+        toggles.removeFromTop (6);
         filterIRButton.setBounds (toggles.removeFromTop (28));
+        toggles.removeFromTop (6);
+        msButton.setBounds       (toggles.removeFromTop (28));
     }
 
     renderBackground();
