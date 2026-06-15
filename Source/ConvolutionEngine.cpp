@@ -53,7 +53,7 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
                                                   const IRBakeParams& bp)
 {
     const int numCh = raw.getNumChannels();
-    const int n     = raw.getNumSamples();
+    int       n     = raw.getNumSamples();   // working length; updated if the IR is stretched
     if (numCh == 0 || n == 0 || irSampleRate <= 0.0)
         return {};
 
@@ -62,10 +62,9 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
     juce::AudioBuffer<float> out;
     out.makeCopyOf (raw);
 
-    // 0. trim: keep only the IR region between startFrac and endFrac (head/tail trim).
-    //    Applied before all shaping so reverse/fade/decay/taper operate on the kept
-    //    region. The window is clamped to at least one sample so a fully collapsed
-    //    range (start >= end) still yields a valid (if tiny) kernel.
+    // 0. trim: keep only the IR region between startFrac and endFrac (head/tail trim). Applied
+    //    first so stretch + reverse/fade/decay/taper all operate on the kept region. Clamped to
+    //    at least one sample so a fully collapsed range (start >= end) still yields a valid kernel.
     {
         const float s = juce::jlimit (0.0f, 1.0f, bp.startFrac);
         const float e = juce::jlimit (0.0f, 1.0f, bp.endFrac);
@@ -80,9 +79,39 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
             for (int ch = 0; ch < numCh; ++ch)
                 trimmed.copyFrom (ch, 0, out, ch, first, trimLen);
             out = std::move (trimmed);
+            n   = trimLen;
         }
     }
-    const int len = out.getNumSamples();   // working length after trim (n is the raw length)
+
+    // 0b. stretch: time-scale the (trimmed) IR by resampling (linear interpolation), so fade-in /
+    //     decay / taper operate in the stretched time frame. No anti-alias filter on down-stretch
+    //     (<1) — minor and acceptable for an IR. Engine/latency unchanged (rebake keeps the file's
+    //     engine), per the "bake knobs never reselect the engine" rule.
+    if (! juce::approximatelyEqual (bp.stretch, 1.0f) && bp.stretch > 0.0f && n > 1)
+    {
+        const int newLen = juce::jlimit (1, 1 << 24, (int) std::lround ((double) n * (double) bp.stretch));
+        if (newLen > 1 && newLen != n)
+        {
+            juce::AudioBuffer<float> stretched (numCh, newLen);
+            const double ratio = (double) (n - 1) / (double) (newLen - 1);
+            for (int ch = 0; ch < numCh; ++ch)
+            {
+                const float* src = out.getReadPointer (ch);
+                float*       dst = stretched.getWritePointer (ch);
+                for (int i = 0; i < newLen; ++i)
+                {
+                    const double pos = (double) i * ratio;
+                    const int    i0  = juce::jlimit (0, n - 1, (int) pos);
+                    const int    i1  = juce::jmin (n - 1, i0 + 1);
+                    const float  f   = (float) (pos - (double) i0);
+                    dst[i] = src[i0] + (src[i1] - src[i0]) * f;
+                }
+            }
+            out = std::move (stretched);
+            n   = newLen;
+        }
+    }
+    const int len = out.getNumSamples();   // working length after trim + stretch
 
     // 1. reverse (before all windowing, so fade-in shapes what becomes the new onset)
     if (bp.reverse)

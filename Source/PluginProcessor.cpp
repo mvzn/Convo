@@ -23,6 +23,8 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     msBassParam   = apvts.getRawParameterValue ("msBass");
     preDelayParam = apvts.getRawParameterValue ("preDelay");
     widthParam    = apvts.getRawParameterValue ("width");
+    feedbackParam = apvts.getRawParameterValue ("feedback");
+    dampParam     = apvts.getRawParameterValue ("damp");
     duckParam     = apvts.getRawParameterValue ("duck");
     duckRelParam  = apvts.getRawParameterValue ("duckRelease");
     irStartParam  = apvts.getRawParameterValue ("irStart");
@@ -30,6 +32,7 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     fadeInParam   = apvts.getRawParameterValue ("fadeIn");
     decayParam    = apvts.getRawParameterValue ("decay");
     taperParam    = apvts.getRawParameterValue ("taper");
+    stretchParam  = apvts.getRawParameterValue ("stretch");
     reverseParam  = apvts.getRawParameterValue ("reverse");
     rawLevelParam = apvts.getRawParameterValue ("irRaw");
     clipGuardParam = apvts.getRawParameterValue ("clipGuard");
@@ -97,6 +100,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
         ParameterID { "width", 1 }, "Width",
         NormalisableRange<float> (0.0f, 200.0f, 1.0f), 100.0f, "%"));
 
+    // creative feedback: the (damped, soft-saturated) convolved output is mixed back into the
+    // wet input before the next block's convolution. Clamped well below unity and tamed by the
+    // damping low-pass + soft-saturation, so it self-oscillates into a texture without blowing up.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "feedback", 1 }, "Feedback",
+        NormalisableRange<float> (0.0f, 95.0f, 1.0f), 0.0f, "%"));
+
+    // damping low-pass in the feedback path: tames the runaway highs a regenerating loop builds up.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "damp", 1 }, "Damp",
+        NormalisableRange<float> (200.0f, 20000.0f, 1.0f, 0.25f), 7000.0f, "Hz"));
+
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "duck", 1 }, "Duck",
         NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f, "%"));
@@ -135,6 +150,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "taper", 1 }, "Taper",
         NormalisableRange<float> (0.0f, 500.0f, 1.0f), 10.0f, "ms"));
+
+    // time-stretch the IR (resampled in bake): <100% shortens, >100% lengthens. 100% = off.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "stretch", 1 }, "Stretch",
+        NormalisableRange<float> (25.0f, 400.0f, 1.0f, 0.5f), 100.0f, "%"));
 
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "reverse", 1 }, "Reverse", false));
@@ -214,6 +234,10 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     *sideHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (sampleRate, msBassParam->load());
     sideHP.reset();
 
+    dampLP.prepare (spec);
+    *dampLP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass (sampleRate, dampParam->load());
+    dampLP.reset();
+
     maxPreDelaySamples = (int) std::ceil (0.5 * sampleRate) + 1;
     preDelayLine.setMaximumDelayInSamples (maxPreDelaySamples);
     preDelayLine.prepare (spec);
@@ -245,6 +269,8 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     inHPSm.reset       (sampleRate, 0.05);
     inLPSm.reset       (sampleRate, 0.05);
     msBassSm.reset     (sampleRate, 0.05);
+    feedbackSm.reset   (sampleRate, 0.05);
+    dampSm.reset       (sampleRate, 0.05);
     clipGuardSm.reset  (sampleRate, 0.01);
 
     dryGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (dryParam->load(),    -60.0f));
@@ -261,16 +287,21 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     inHPSm.setCurrentAndTargetValue       (inHPParam->load());
     inLPSm.setCurrentAndTargetValue       (inLPParam->load());
     msBassSm.setCurrentAndTargetValue     (msBassParam->load());
+    feedbackSm.setCurrentAndTargetValue   (juce::jlimit (0.0f, 0.95f, feedbackParam->load() * 0.01f));
+    dampSm.setCurrentAndTargetValue       (dampParam->load());
     clipGuardSm.setCurrentAndTargetValue  (clipGuardParam->load() > 0.5f ? 1.0f : 0.0f);
 
     duckEnv         = 0.0f;
     wetCompTarget   = 1.0f;
     prevMsEncode    = false;
     prevFilterInput = true;
-    prevToneActive  = prevInHpActive = prevInLpActive = prevBassActive = prevPreDelayActive = true;
+    prevToneActive  = prevInHpActive = prevInLpActive = prevBassActive
+                    = prevPreDelayActive = prevFeedbackActive = true;
 
     inWork.setSize  ((int) spec.numChannels, maxSamples);
     wetWork.setSize ((int) spec.numChannels, maxSamples);
+    feedbackState.setSize ((int) spec.numChannels, maxSamples);
+    feedbackState.clear();
 }
 
 void ConvoAudioProcessor::releaseResources()
@@ -281,6 +312,7 @@ void ConvoAudioProcessor::releaseResources()
     inputHP.reset();
     inputLP.reset();
     sideHP.reset();
+    dampLP.reset();
     preDelayLine.reset();
     dryDelayLine.reset();
 }
@@ -359,6 +391,35 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     for (int ch = 0; ch < numCh; ++ch)
         wetWork.copyFrom (ch, 0, inWork, ch, 0, numSamples);
 
+    // creative feedback: mix the previous block's (damped) convolved output back into the wet
+    // source before convolution. The amount is hard-clamped to 0.95 and the fed-back signal is
+    // soft-saturated, so the loop self-oscillates into a texture instead of diverging. Skipped
+    // entirely (bit-identical no-op) while the amount is ~0; reset the loop state on re-engage.
+    feedbackSm.setTargetValue (juce::jlimit (0.0f, 0.95f, feedbackParam->load() * 0.01f));
+    // one smoothed amount per block (block-granular feedback); the smoother keeps the
+    // block-to-block ramp click-free, so a per-sample ramp inside the loop isn't needed
+    const float fbAmt = feedbackSm.skip (numSamples);
+    const bool fbActive = feedbackSm.isSmoothing() || fbAmt > 0.0005f;
+    if (fbActive != prevFeedbackActive)
+    {
+        if (fbActive) { dampLP.reset(); feedbackState.clear(); }   // clean engage
+        prevFeedbackActive = fbActive;
+    }
+    if (fbActive)
+    {
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            auto* w  = wetWork.getWritePointer (ch);
+            auto* fb = feedbackState.getReadPointer (ch);
+            for (int i = 0; i < numSamples; ++i)
+                w[i] += fbAmt * convo::softClip (fb[i]);   // saturate the fed-back tail
+        }
+    }
+    else
+    {
+        dampSm.skip (numSamples);   // keep the damp smoother tracking so re-engaging starts in place
+    }
+
     auto wetBlock = juce::dsp::AudioBlock<float> (wetWork)
                         .getSubsetChannelBlock (0, (size_t) numCh)
                         .getSubBlock (0, (size_t) numSamples);
@@ -430,6 +491,24 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
     if (msEncode)   // decode mid/side back to L/R
         convo::msDecode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
+
+    // capture this block's convolved output (post-decode, pre wet-chain) into the feedback state
+    // for the next block, damped by a one-pole low-pass so the regenerating loop can't pile up
+    // highs. Only kept while feedback is engaged — otherwise the stale state is irrelevant.
+    if (fbActive)
+    {
+        dampSm.setTargetValue (dampParam->load());
+        const float dampFc = dampSm.skip (numSamples);
+        for (int ch = 0; ch < numCh; ++ch)
+            feedbackState.copyFrom (ch, 0, wetWork, ch, 0, numSamples);
+
+        auto fbBlock = juce::dsp::AudioBlock<float> (feedbackState)
+                           .getSubsetChannelBlock (0, (size_t) numCh)
+                           .getSubBlock (0, (size_t) numSamples);
+        *dampLP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass (currentSampleRate, dampFc);
+        juce::dsp::ProcessContextReplacing<float> dctx (fbBlock);
+        dampLP.process (dctx);
+    }
 
     // tone (tilt): rebuild shelf coefficients once per block from the smoothed value.
     // ArrayCoefficients + Coefficients::operator= reuse the existing array storage,
@@ -604,6 +683,7 @@ IRBakeParams ConvoAudioProcessor::currentBakeParams() const
     p.decayOff     = dec >= kDecayOffMs - 0.5f;
     p.decaySeconds = dec * 0.001f;
     p.taperMs      = taperParam->load();
+    p.stretch      = stretchParam->load() * 0.01f;   // % -> factor
     p.reverse      = reverseParam->load() > 0.5f;
     p.autoLevel    = rawLevelParam->load() < 0.5f;
     p.msMode       = msParam->load() > 0.5f;
