@@ -4,6 +4,11 @@ name: Build
 # Trigger it from the Actions tab ("Run workflow") when you want a build.
 on:
   workflow_dispatch:
+    inputs:
+      macos:
+        description: "Also build macOS (off by default — slow, 10x-cost runner)"
+        type: boolean
+        default: false
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -25,7 +30,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        # macOS is opt-in via the workflow_dispatch "macos" input — skipped by default so a
+        # routine run only spins up Linux + Windows (macOS is the 10x-cost runner). Use the
+        # *typed* inputs.macos (boolean): github.event.inputs.macos is the string "false",
+        # which is truthy, and would build macOS every time.
+        os: ${{ fromJSON(inputs.macos && '["ubuntu-latest", "windows-latest", "macos-latest"]' || '["ubuntu-latest", "windows-latest"]') }}
         build_type: [Release]
 
     steps:
