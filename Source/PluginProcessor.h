@@ -161,7 +161,8 @@ private:
     // message-thread bake bookkeeping
     IRBakeParams lastBaked;
     IRBakeParams lastSeenBakeParams;                 // debounce: rebake only once values settle
-    juce::AudioBuffer<float> bakedIR;
+    juce::AudioBuffer<float> bakedIR;                // FULL (untrimmed) IR for the display thumbnail
+    juce::AudioBuffer<float> audioBakeScratch;       // trimmed kernel handed to the engine (not shown)
     double bakedIRSampleRate = 48000.0;
 
     juce::AudioBuffer<float> inWork, wetWork;         // audio-thread work buffers

@@ -66,6 +66,8 @@ private:
     float trimFracToX (float frac) const;       // map a 0..1 fraction to an x in waveZone
     float trimXToFrac (int x) const;            // map an editor x to a clamped 0..1 fraction
     TrimHandle trimHandleAt (juce::Point<int> p) const;   // which handle (if any) is under the cursor
+    float liveTrimStart() const;                // Start frac: the live drag value while dragging, else the param
+    float liveTrimEnd()   const;                // End frac: same
 
     ConvoAudioProcessor& processor;
 
@@ -124,6 +126,7 @@ private:
     // processor's debounced timer; these params already drive the bake through APVTS)
     TrimHandle activeHandle = TrimHandle::none;   // handle currently being dragged
     TrimHandle hoverHandle  = TrimHandle::none;   // handle under the cursor (affordance)
+    float dragStartFrac = 0.0f, dragEndFrac = 1.0f;   // live trim while dragging — committed to the params on mouse-up
     float trimStartSeen = -1.0e9f, trimEndSeen = -1.0e9f;
     static constexpr int kTrimHandleHitPx = 8;    // half-width of a handle's grab zone
 
@@ -140,7 +143,7 @@ private:
     std::unique_ptr<juce::AlertWindow> savePresetWindow;   // async "name this preset" dialog
 
     // cached chrome (rendered at physical resolution for HiDPI crispness)
-    juce::Image backgroundImage, waveImage;
+    juce::Image backgroundImage, waveImage, waveBlurImage;   // waveBlurImage: pre-blurred wave for the trim preview
 
     // layout regions (used by paint)
     juce::Rectangle<int> headerZone, dropZone, waveZone, inMeterZone, outMeterZone,

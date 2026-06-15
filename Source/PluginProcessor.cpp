@@ -726,15 +726,27 @@ void ConvoAudioProcessor::timerCallback()
         const bool toggleChanged = msChanged || targetChanged
                                  || (cur.reverse   != lastBaked.reverse)
                                  || (cur.autoLevel != lastBaked.autoLevel);
-        convolution.rebake (irLibrary.getIR(), irLibrary.getSampleRate(), cur, bakedIR);
-        bakedIRSampleRate = irLibrary.getSampleRate();
-        lastBaked = cur;
-        tailSeconds.store ((float) (bakedIR.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
 
+        // The display shows the FULL IR — trim is a selection overlay, not baked into the picture.
+        // So the audio kernel always re-bakes (incl. trim), but the thumbnail rebuilds only when a
+        // NON-trim param changed: dragging Start/End reloads the kernel without re-rendering visuals.
+        auto curDisp  = cur;       curDisp.startFrac  = 0.0f; curDisp.endFrac  = 1.0f;
+        auto lastDisp = lastBaked; lastDisp.startFrac = 0.0f; lastDisp.endFrac = 1.0f;
+        const bool displayChanged = (curDisp != lastDisp);
+
+        convolution.rebake (irLibrary.getIR(), irLibrary.getSampleRate(), cur, audioBakeScratch);
+        bakedIRSampleRate = irLibrary.getSampleRate();
+        tailSeconds.store ((float) (audioBakeScratch.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
+        lastBaked = cur;
+
+        if (displayChanged)
+        {
+            bakedIR = ConvolutionEngine::bake (irLibrary.getIR(), irLibrary.getSampleRate(), curDisp);
+            bakeGeneration.fetch_add (1);
+        }
         if (msChanged)     msActive.store (cur.msMode);
         if (targetChanged) filterInput.store (! cur.filterIR);
         if (toggleChanged) loadFadePending.store (true);
-        bakeGeneration.fetch_add (1);
     }
     lastSeenBakeParams = cur;
 }
@@ -745,14 +757,20 @@ bool ConvoAudioProcessor::loadIRFile (const juce::File& file)
         return false;
 
     const auto cur = currentBakeParams();
-    const int  lat = convolution.loadIR (irLibrary.getIR(), irLibrary.getSampleRate(), cur, bakedIR);
+    const int  lat = convolution.loadIR (irLibrary.getIR(), irLibrary.getSampleRate(), cur, audioBakeScratch);
 
     bakedIRSampleRate  = irLibrary.getSampleRate();
     lastBaked          = cur;
     lastSeenBakeParams = cur;
     msActive.store (cur.msMode);          // kernel is baked to match the current M/S mode
     filterInput.store (! cur.filterIR);   // and to the current pre-IR filter target
-    tailSeconds.store ((float) (bakedIR.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
+    tailSeconds.store ((float) (audioBakeScratch.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
+
+    // display IR is the FULL (untrimmed) picture; trim shows as a selection overlay in the editor
+    {
+        auto curDisp = cur; curDisp.startFrac = 0.0f; curDisp.endFrac = 1.0f;
+        bakedIR = ConvolutionEngine::bake (irLibrary.getIR(), irLibrary.getSampleRate(), curDisp);
+    }
 
     loadFadePending.store (true);      // arm the click mask before publishing the delay
     dryDelaySamples.store (lat);

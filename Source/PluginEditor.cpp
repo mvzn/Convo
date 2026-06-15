@@ -262,6 +262,7 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
 void ConvoAudioProcessorEditor::renderWaveImage()
 {
     waveImage = juce::Image();
+    waveBlurImage = juce::Image();
     if (waveZone.isEmpty() || thumbnail->getTotalLength() <= 0.0)
         return;
 
@@ -278,6 +279,13 @@ void ConvoAudioProcessorEditor::renderWaveImage()
                                              ConvoColours::teal.withAlpha (0.75f),
                                              0.0f, (float) local.getHeight(), false));
     thumbnail->drawChannels (g, local, 0.0, thumbnail->getTotalLength(), 1.0f);
+
+    // a blurred copy, built once here (never per frame), so the trim preview can show the
+    // unselected head/tail out of focus at zero per-paint cost
+    waveBlurImage = juce::Image (juce::Image::ARGB, w, h, true);
+    juce::ImageConvolutionKernel blur (9);
+    blur.createGaussianBlur (2.5f);
+    blur.applyToImage (waveBlurImage, waveImage, waveBlurImage.getBounds());
 }
 
 void ConvoAudioProcessorEditor::renderBackground()
@@ -548,15 +556,26 @@ float ConvoAudioProcessorEditor::trimXToFrac (int x) const
     return juce::jlimit (0.0f, 1.0f, ((float) x - z.getX()) / z.getWidth());
 }
 
+float ConvoAudioProcessorEditor::liveTrimStart() const
+{
+    return activeHandle != TrimHandle::none ? dragStartFrac
+                                            : processor.getAPVTS().getRawParameterValue ("irStart")->load();
+}
+
+float ConvoAudioProcessorEditor::liveTrimEnd() const
+{
+    return activeHandle != TrimHandle::none ? dragEndFrac
+                                            : processor.getAPVTS().getRawParameterValue ("irEnd")->load();
+}
+
 ConvoAudioProcessorEditor::TrimHandle ConvoAudioProcessorEditor::trimHandleAt (juce::Point<int> p) const
 {
     // only grab while a waveform is shown and the cursor is within the wave zone band
     if (! waveImage.isValid() || ! waveZone.contains (p))
         return TrimHandle::none;
 
-    auto& a = processor.getAPVTS();
-    const float sx = trimFracToX (a.getRawParameterValue ("irStart")->load());
-    const float ex = trimFracToX (a.getRawParameterValue ("irEnd")->load());
+    const float sx = trimFracToX (liveTrimStart());
+    const float ex = trimFracToX (liveTrimEnd());
 
     const float dxStart = std::abs ((float) p.x - sx);
     const float dxEnd   = std::abs ((float) p.x - ex);
@@ -573,19 +592,9 @@ void ConvoAudioProcessorEditor::drawTrimHandles (juce::Graphics& g)
     if (! waveImage.isValid())
         return;
 
-    auto& a = processor.getAPVTS();
-    const float startFrac = a.getRawParameterValue ("irStart")->load();
-    const float endFrac   = a.getRawParameterValue ("irEnd")->load();
     const auto  z  = waveZone.toFloat();
-    const float sx = trimFracToX (startFrac);
-    const float ex = trimFracToX (endFrac);
-
-    // dim the trimmed-off head (left of Start) and tail (right of End)
-    g.setColour (ConvoColours::bg.withAlpha (0.62f));
-    if (sx > z.getX() + 0.5f)
-        g.fillRect (juce::Rectangle<float> (z.getX(), z.getY(), sx - z.getX(), z.getHeight()));
-    if (ex < z.getRight() - 0.5f)
-        g.fillRect (juce::Rectangle<float> (ex, z.getY(), z.getRight() - ex, z.getHeight()));
+    const float sx = trimFracToX (liveTrimStart());   // follows the live drag while dragging
+    const float ex = trimFracToX (liveTrimEnd());
 
     auto drawHandle = [&] (float x, TrimHandle which, bool pointsRight)
     {
@@ -629,8 +638,13 @@ void ConvoAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
     activeHandle = trimHandleAt (e.getPosition());
     if (activeHandle != TrimHandle::none)
     {
+        // seed the live drag values from the params; nothing commits (no re-bake) until mouse-up,
+        // so the drag is just the cheap blur/dim preview
+        auto& a = processor.getAPVTS();
+        dragStartFrac = a.getRawParameterValue ("irStart")->load();
+        dragEndFrac   = a.getRawParameterValue ("irEnd")->load();
         const char* id = activeHandle == TrimHandle::start ? "irStart" : "irEnd";
-        if (auto* param = processor.getAPVTS().getParameter (id))
+        if (auto* param = a.getParameter (id))
             param->beginChangeGesture();
         repaint (dropZone);
     }
@@ -641,34 +655,29 @@ void ConvoAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
     if (activeHandle == TrimHandle::none)
         return;
 
-    auto& a = processor.getAPVTS();
     const float frac = trimXToFrac (e.getPosition().x);
-
-    // keep a minimum gap so the two handles can't cross (and the bake always has a region)
-    constexpr float minGap = 0.005f;
+    constexpr float minGap = 0.005f;   // handles can't cross — the bake always keeps a region
     if (activeHandle == TrimHandle::start)
-    {
-        const float endFrac = a.getRawParameterValue ("irEnd")->load();
-        if (auto* p = a.getParameter ("irStart"))
-            p->setValueNotifyingHost (juce::jmin (frac, endFrac - minGap));
-    }
+        dragStartFrac = juce::jmin (frac, dragEndFrac - minGap);
     else
-    {
-        const float startFrac = a.getRawParameterValue ("irStart")->load();
-        if (auto* p = a.getParameter ("irEnd"))
-            p->setValueNotifyingHost (juce::jmax (frac, startFrac + minGap));
-    }
-    // params are 0..1 already, so the normalised value == the fraction; repaint the band
-    repaint (dropZone);
+        dragEndFrac   = juce::jmax (frac, dragStartFrac + minGap);
+
+    repaint (dropZone);   // cheap: re-blit the sharp/blurred regions, no re-bake
 }
 
 void ConvoAudioProcessorEditor::mouseUp (const juce::MouseEvent&)
 {
     if (activeHandle != TrimHandle::none)
     {
-        const char* id = activeHandle == TrimHandle::start ? "irStart" : "irEnd";
-        if (auto* param = processor.getAPVTS().getParameter (id))
+        // commit the dragged value -> the single re-bake (audio kernel only) for this edit
+        auto& a = processor.getAPVTS();
+        const char* id  = activeHandle == TrimHandle::start ? "irStart" : "irEnd";
+        const float val = activeHandle == TrimHandle::start ? dragStartFrac : dragEndFrac;
+        if (auto* param = a.getParameter (id))
+        {
+            param->setValueNotifyingHost (val);   // params are 0..1, so value == fraction
             param->endChangeGesture();
+        }
         activeHandle = TrimHandle::none;
         repaint (dropZone);
     }
@@ -715,7 +724,28 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
     {
         if (waveImage.isValid())
         {
-            g.drawImage (waveImage, waveZone.toFloat());
+            // full IR is shown; the trim selection keeps the kept region sharp and blurs + slightly
+            // dims the unselected head/tail (blur is pre-rendered, so this is just region blits)
+            const auto  zf = waveZone.toFloat();
+            const float sx = trimFracToX (liveTrimStart());
+            const float ex = trimFracToX (liveTrimEnd());
+
+            if (waveBlurImage.isValid())
+            {
+                g.setOpacity (0.6f);
+                g.drawImage (waveBlurImage, zf);
+                g.setOpacity (1.0f);
+            }
+            else
+            {
+                g.drawImage (waveImage, zf);
+            }
+            {
+                juce::Graphics::ScopedSaveState ss (g);
+                g.reduceClipRegion (juce::Rectangle<float> (sx, zf.getY(), juce::jmax (0.0f, ex - sx), zf.getHeight())
+                                        .getSmallestIntegerContainer());
+                g.drawImage (waveImage, zf);   // selected region: sharp + full bright
+            }
 
             if (bakedLenText.isNotEmpty())
             {
@@ -725,7 +755,7 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
             }
 
             drawFilterOverlay (g);   // EQ curve (tone + pre-IR HP/LP) + bass-mono marker
-            drawTrimHandles (g);     // dim the trimmed-off head/tail + draggable Start/End handles
+            drawTrimHandles (g);     // Start/End handle lines + tabs (the blur/dim is done above)
         }
         else
         {
