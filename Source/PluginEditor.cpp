@@ -289,7 +289,9 @@ void ConvoAudioProcessorEditor::renderBackground()
         g.setColour (ConvoColours::text);
         g.setFont (juce::Font (juce::FontOptions (26.0f, juce::Font::bold)));
         const auto title = juce::String ("Convo");
-        g.drawText (title, h.removeFromLeft (92), juce::Justification::centredLeft);
+        // nudge the wordmark up a few px: the 26 pt bold's large descent makes box-centred
+        // text sit visually low next to the small-caps tagline / toggle row
+        g.drawText (title, h.removeFromLeft (92).translated (0, -3), juce::Justification::centredLeft);
 
         g.setColour (ConvoColours::mint.withAlpha (0.85f));
         g.fillRect (h.getX() + 2, headerZone.getCentreY() - 8, 2, 16);
