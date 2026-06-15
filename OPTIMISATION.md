@@ -17,6 +17,12 @@ is a Debug build** (`CMAKE_BUILD_TYPE=Debug`, unoptimised, ~96 MB `.so`). An uno
 convolution of a multi-second IR cannot meet the real-time deadline. Verify any local install
 is Release before chasing code-level wins.
 
+- **Status: CONFIRMED** — a Release build (`-O3` + LTO, ~7.4 MB) eliminates the 9 s-IR stutter
+  (verified by the user). The headless probe also showed the engine itself is correct (a 9 s
+  delta IR goes live, passes through at exactly the reported latency, finite over noise), so
+  there is no DSP bug here — it was purely build config. `CMakeLists.txt` now defaults a fresh
+  configure to Release; `COPY_PLUGIN_AFTER_BUILD=TRUE` means rebuilding a Debug `build/` dir
+  reinstalls the Debug plugin, so don't do that for real use.
 - **Impact:** High. **Effort:** none (build config).
 
 ---

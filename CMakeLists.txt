@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.22)
 
 project(Convo VERSION 0.1.0 LANGUAGES C CXX)
 
+# Default to Release for single-config generators (Ninja, Makefiles): an unoptimised Debug
+# build stutters / drops out on long-IR convolution. Multi-config generators (VS, Xcode) are
+# unaffected. Override with -DCMAKE_BUILD_TYPE=Debug or RelWithDebInfo.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Build type" FORCE)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "10.13" CACHE STRING "Minimum macOS version")
