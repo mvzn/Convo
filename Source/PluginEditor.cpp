@@ -312,6 +312,13 @@ void ConvoAudioProcessorEditor::renderBackground()
             .drawForRectangle (g, r);
         g.setColour (ConvoColours::panel);
         g.fillRoundedRectangle (r.toFloat(), 6.0f);
+        // brushed-metal "makeup": a faint top-lit sheen + hairline top highlight, matching the knob
+        // bezels so the whole chassis reads as one piece of dark hardware
+        g.setGradientFill (juce::ColourGradient (ConvoColours::gunmetalHi.withAlpha (0.12f), 0.0f, (float) r.getY(),
+                                                 ConvoColours::panel.withAlpha (0.0f),       0.0f, (float) r.getCentreY(), false));
+        g.fillRoundedRectangle (r.toFloat(), 6.0f);
+        g.setColour (juce::Colours::white.withAlpha (0.04f));
+        g.drawLine ((float) r.getX() + 6.0f, (float) r.getY() + 1.0f, (float) r.getRight() - 6.0f, (float) r.getY() + 1.0f, 1.0f);
         g.setColour (ConvoColours::border);
         g.drawRoundedRectangle (r.toFloat(), 6.0f, 1.0f);
 

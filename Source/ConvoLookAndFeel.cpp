@@ -33,26 +33,72 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
     auto lineW    = radius * 0.14f;
     auto arcR     = radius - lineW * 0.5f;
     auto angle    = rotaryStartAngle + sliderPos * (rotaryEndAngle - rotaryStartAngle);
-    auto bodyR    = arcR - lineW * 1.3f;
 
-    // knob body (gunmetal) with a faint top highlight and grounding shadow ring
-    g.setColour (Colours::black.withAlpha (0.35f));
-    g.fillEllipse (centre.x - bodyR - 1.5f, centre.y - bodyR - 0.5f, bodyR * 2.0f + 3.0f, bodyR * 2.0f + 3.0f);
-    g.setColour (ConvoColours::knobBody);
-    g.fillEllipse (centre.x - bodyR, centre.y - bodyR, bodyR * 2.0f, bodyR * 2.0f);
-    g.setGradientFill (ColourGradient (ConvoColours::gunmetalHi.withAlpha (0.35f), centre.x, centre.y - bodyR,
-                                       ConvoColours::knobBody.withAlpha (0.0f),    centre.x, centre.y, false));
-    g.fillEllipse (centre.x - bodyR, centre.y - bodyR, bodyR * 2.0f, bodyR * 2.0f);
-    g.setColour (ConvoColours::border);
-    g.drawEllipse (centre.x - bodyR, centre.y - bodyR, bodyR * 2.0f, bodyR * 2.0f, 1.0f);
+    const float outerR = arcR - lineW * 1.3f;     // stationary bezel outer edge (just inside the arc)
+    const float capR   = outerR * 0.85f;          // rotating cap = 85% of the bezel diameter
 
-    // unfilled arc track
+    // --- soft ambient shadow cast below the knob (premium-hardware grounding) ---
+    for (int i = 4; i >= 1; --i)
+    {
+        const float rr = outerR + (float) i * 1.6f;
+        g.setColour (Colours::black.withAlpha (0.09f));
+        g.fillEllipse (centre.x - rr, centre.y - rr + 3.5f, rr * 2.0f, rr * 2.0f);
+    }
+
+    // --- stationary bezel ring: dark matte metal, top-lit ---
+    g.setColour (Colours::black);
+    g.fillEllipse (centre.x - outerR, centre.y - outerR, outerR * 2.0f, outerR * 2.0f);
+    g.setGradientFill (ColourGradient (ConvoColours::gunmetalHi, centre.x, centre.y - outerR,
+                                       ConvoColours::bg,         centre.x, centre.y + outerR, false));
+    g.fillEllipse (centre.x - outerR, centre.y - outerR, outerR * 2.0f, outerR * 2.0f);
+    g.setColour (Colours::black.withAlpha (0.6f));
+    g.drawEllipse (centre.x - outerR, centre.y - outerR, outerR * 2.0f, outerR * 2.0f, 1.0f);
+
+    // --- two thin decorative arc segments embedded in the bezel face ---
+    {
+        const float bezR = (outerR + capR) * 0.5f;
+        Path a1, a2;
+        a1.addCentredArc (centre.x, centre.y, bezR, bezR, 0.0f,
+                          MathConstants<float>::pi * 1.12f, MathConstants<float>::pi * 1.58f, true);
+        a2.addCentredArc (centre.x, centre.y, bezR, bezR, 0.0f,
+                          MathConstants<float>::pi * 0.12f, MathConstants<float>::pi * 0.58f, true);
+        g.setColour (ConvoColours::gunmetalHi.withAlpha (0.55f));
+        g.strokePath (a1, PathStrokeType (1.2f, PathStrokeType::curved, PathStrokeType::rounded));
+        g.strokePath (a2, PathStrokeType (1.2f, PathStrokeType::curved, PathStrokeType::rounded));
+    }
+
+    // --- recess shadow: a dark ring so the cap reads as sunk a few px into the bezel ---
+    g.setColour (Colours::black.withAlpha (0.55f));
+    g.fillEllipse (centre.x - capR - 3.0f, centre.y - capR - 3.0f, (capR + 3.0f) * 2.0f, (capR + 3.0f) * 2.0f);
+
+    // --- rotating cap: radial brushed-metal texture ---
+    g.setGradientFill (ColourGradient (ConvoColours::gunmetalHi, centre.x, centre.y - capR * 0.5f,
+                                       ConvoColours::knobBody,   centre.x, centre.y + capR, true));
+    g.fillEllipse (centre.x - capR, centre.y - capR, capR * 2.0f, capR * 2.0f);
+    {
+        Graphics::ScopedSaveState clip (g);
+        Path capArea; capArea.addEllipse (centre.x - capR, centre.y - capR, capR * 2.0f, capR * 2.0f);
+        g.reduceClipRegion (capArea);
+        const int spokes = 72;                         // faint alternating radial striations -> brushed look
+        for (int i = 0; i < spokes; ++i)
+        {
+            const float a = angle + (float) i / (float) spokes * MathConstants<float>::twoPi;  // rotates with the cap
+            const Point<float> d (std::cos (a), std::sin (a));
+            g.setColour ((i & 1 ? ConvoColours::gunmetalHi : Colours::black).withAlpha (0.05f));
+            g.drawLine ({ centre + d * (capR * 0.12f), centre + d * capR }, 1.0f);
+        }
+    }
+    g.setColour (Colours::black.withAlpha (0.4f));
+    g.drawEllipse (centre.x - capR, centre.y - capR, capR * 2.0f, capR * 2.0f, 1.0f);
+    g.setGradientFill (ColourGradient (Colours::white.withAlpha (0.10f), centre.x, centre.y - capR,
+                                       Colours::transparentWhite,        centre.x, centre.y, false));
+    g.fillEllipse (centre.x - capR, centre.y - capR, capR * 2.0f, capR * 2.0f);
+
+    // --- unfilled value-arc track + filled value arc (the outer "LED dial", kept) ---
     Path track;
     track.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, rotaryStartAngle, rotaryEndAngle, true);
     g.setColour (ConvoColours::arcTrack);
     g.strokePath (track, PathStrokeType (lineW, PathStrokeType::curved, PathStrokeType::rounded));
-
-    // filled value arc (phthalo -> mint)
     if (slider.isEnabled() && sliderPos > 0.0f)
     {
         Path value;
@@ -62,15 +108,19 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
         g.strokePath (value, PathStrokeType (lineW, PathStrokeType::curved, PathStrokeType::rounded));
     }
 
-    // pointer: a line from mid-body to the rim, capped with a dot
-    const auto dir = Point<float> (std::cos (angle - MathConstants<float>::halfPi),
-                                   std::sin (angle - MathConstants<float>::halfPi));
-    const auto inner = centre + dir * (bodyR * 0.45f);
-    const auto outer = centre + dir * (bodyR * 0.92f);
+    // --- LED indicator dot on the rotating cap, near its outer edge (glows like the arc) ---
+    const Point<float> dir (std::cos (angle - MathConstants<float>::halfPi),
+                            std::sin (angle - MathConstants<float>::halfPi));
+    const Point<float> led = centre + dir * (capR * 0.8f);
+    const float ledR = jmax (2.0f, lineW * 0.55f);
+    g.setColour (ConvoColours::mint.withAlpha (0.22f));
+    g.fillEllipse (Rectangle<float> (ledR * 3.2f, ledR * 3.2f).withCentre (led));
+    g.setColour (ConvoColours::mint.withAlpha (0.45f));
+    g.fillEllipse (Rectangle<float> (ledR * 2.2f, ledR * 2.2f).withCentre (led));
     g.setColour (ConvoColours::mint);
-    g.drawLine ({ inner, outer }, jmax (2.0f, lineW * 0.6f));
-    const float dot = lineW * 0.95f;
-    g.fillEllipse (Rectangle<float> (dot, dot).withCentre (outer));
+    g.fillEllipse (Rectangle<float> (ledR * 1.4f, ledR * 1.4f).withCentre (led));
+    g.setColour (Colours::white.withAlpha (0.65f));
+    g.fillEllipse (Rectangle<float> (ledR * 0.6f, ledR * 0.6f).withCentre (led));
 }
 
 void ConvoLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button,
