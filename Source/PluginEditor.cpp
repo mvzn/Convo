@@ -780,7 +780,7 @@ void ConvoAudioProcessorEditor::resized()
     presetButton.setBounds (header.removeFromRight (74));
     header.removeFromRight (8);
     fileNameLabel.setBounds (header);
-    inner.removeFromTop (6);
+    inner.removeFromTop (10);   // match the 10 px gap between knob groups
     waveZone = inner;
 
     area.removeFromTop (12);
