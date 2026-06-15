@@ -85,6 +85,8 @@ private:
     std::atomic<float>* msBassParam   = nullptr;   // bass-mono crossover (side high-pass) in M/S mode
     std::atomic<float>* preDelayParam = nullptr;
     std::atomic<float>* widthParam    = nullptr;
+    std::atomic<float>* feedbackParam = nullptr;   // amount of convolved output fed back into the wet input
+    std::atomic<float>* dampParam     = nullptr;   // low-pass cutoff in the feedback path
     std::atomic<float>* duckParam     = nullptr;
     std::atomic<float>* duckRelParam  = nullptr;
     std::atomic<float>* fadeInParam   = nullptr;
@@ -103,6 +105,7 @@ private:
     Duplicator lowShelf, highShelf;                  // tilt tone
     Duplicator inputHP, inputLP;                     // pre-IR input filter (first-order, 6 dB/oct)
     Duplicator sideHP;                               // bass-mono: high-passes the side in M/S mode
+    Duplicator dampLP;                               // damping low-pass in the feedback path
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> preDelayLine { 1 };
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>   dryDelayLine  { 1 };
 
@@ -112,6 +115,8 @@ private:
                                wetCompSm,            // adaptive wet gain compensation (dry-referenced)
                                inHPSm, inLPSm,       // pre-IR filter cutoffs (smoothed, per-block coeff rebuild)
                                msBassSm,             // bass-mono crossover cutoff (smoothed)
+                               feedbackSm,           // feedback amount (0..0.95), smoothed
+                               dampSm,               // feedback-path low-pass cutoff (smoothed)
                                clipGuardSm;          // 0..1 blend so toggling the clip guard is click-free
 
     double currentSampleRate = 48000.0;
@@ -125,7 +130,7 @@ private:
     // neutral-stage skip edge detect: reset the filter/delay on re-engage so the resumed block
     // starts clean (each stage is skipped while its control sits at a no-op value)
     bool   prevToneActive = true, prevInHpActive = true, prevInLpActive = true,
-           prevBassActive = true, prevPreDelayActive = true;
+           prevBassActive = true, prevPreDelayActive = true, prevFeedbackActive = true;
 
     std::atomic<int>   dryDelaySamples { 0 };        // engine latency published on load (message thread)
     std::atomic<bool>  loadFadePending { false };    // trigger the click-masking output fade
@@ -149,6 +154,7 @@ private:
     double bakedIRSampleRate = 48000.0;
 
     juce::AudioBuffer<float> inWork, wetWork;         // audio-thread work buffers
+    juce::AudioBuffer<float> feedbackState;           // previous block's damped wet, fed back next block
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessor)
 };

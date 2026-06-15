@@ -70,10 +70,10 @@ private:
 
     // parameter controls
     juce::Slider drySlider, wetSlider, irGainSlider, outputSlider, toneSlider, inHPSlider, inLPSlider,
-                 preDelaySlider, widthSlider, msBassSlider,
+                 preDelaySlider, widthSlider, msBassSlider, feedbackSlider, dampSlider,
                  duckSlider, duckRelSlider, fadeInSlider, decaySlider, taperSlider;
     juce::Label  dryLabel, wetLabel, irGainLabel, outputLabel, toneLabel, inHPLabel, inLPLabel,
-                 preDelayLabel, widthLabel, msBassLabel,
+                 preDelayLabel, widthLabel, msBassLabel, feedbackLabel, dampLabel,
                  duckLabel, duckRelLabel, fadeInLabel, decayLabel, taperLabel;
     juce::ToggleButton reverseButton { "Reverse" }, rawLevelButton { "Raw IR" }, filterIRButton { "Filter IR" },
                        clipGuardButton { "Clip Guard" }, wetCompButton { "Wet Comp" },
@@ -82,7 +82,8 @@ private:
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<SliderAttachment> dryAtt, wetAtt, irGainAtt, outputAtt, toneAtt, inHPAtt, inLPAtt,
-                                      preDelayAtt, widthAtt, msBassAtt, duckAtt, duckRelAtt, fadeInAtt, decayAtt, taperAtt;
+                                      preDelayAtt, widthAtt, msBassAtt, feedbackAtt, dampAtt,
+                                      duckAtt, duckRelAtt, fadeInAtt, decayAtt, taperAtt;
     std::unique_ptr<ButtonAttachment> reverseAtt, rawLevelAtt, filterIRAtt, clipGuardAtt, wetCompAtt, msAtt, bypassAtt;
 
     // meters: shown values + slower-decaying peak-hold lines, with last-painted

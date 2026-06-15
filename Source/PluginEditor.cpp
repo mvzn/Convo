@@ -52,6 +52,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setup (inLPSlider,     inLPLabel,     "In LP");
     setup (preDelaySlider, preDelayLabel, "Pre-Delay");
     setup (widthSlider,    widthLabel,    "Width");
+    setup (feedbackSlider, feedbackLabel, "Feedback");
+    setup (dampSlider,     dampLabel,     "Damp");
     setup (msBassSlider,   msBassLabel,   "Bass Mono");
     setup (duckSlider,     duckLabel,     "Duck");
     setup (duckRelSlider,  duckRelLabel,  "Release");
@@ -95,6 +97,11 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     widthSlider.setTooltip    ("Stereo width of the wet (M/S): 0% = mono, 100% = unchanged, 200% = extra wide");
     preDelaySlider.setTooltip ("Delays the wet only (creative pre-delay); the dry tap stays in place. "
                                "Not reported as plugin latency");
+    feedbackSlider.setTooltip ("Feeds the convolved output back into the wet input so the IR re-convolves "
+                               "its own tail — short IRs smear into a resonator, longer ones grow a "
+                               "regenerating wash. Clamped below unity and saturated, so it can't run away");
+    dampSlider.setTooltip     ("Low-pass in the feedback path: lower cutoffs tame the highs the loop "
+                               "builds up, for a darker, more controlled regeneration");
     duckSlider.setTooltip     ("Ducks the wet by the dry input level (louder input pulls the wet back, "
                                "so transients stay clear)");
     duckRelSlider.setTooltip  ("How quickly the wet recovers after the input stops ducking it");
@@ -128,6 +135,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     inLPAtt     = std::make_unique<SliderAttachment> (apvts, "inLP",        inLPSlider);
     preDelayAtt = std::make_unique<SliderAttachment> (apvts, "preDelay",    preDelaySlider);
     widthAtt    = std::make_unique<SliderAttachment> (apvts, "width",       widthSlider);
+    feedbackAtt = std::make_unique<SliderAttachment> (apvts, "feedback",    feedbackSlider);
+    dampAtt     = std::make_unique<SliderAttachment> (apvts, "damp",        dampSlider);
     msBassAtt   = std::make_unique<SliderAttachment> (apvts, "msBass",      msBassSlider);
     duckAtt     = std::make_unique<SliderAttachment> (apvts, "duck",        duckSlider);
     duckRelAtt  = std::make_unique<SliderAttachment> (apvts, "duckRelease", duckRelSlider);
@@ -150,6 +159,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
         { &drySlider, "dry" }, { &wetSlider, "wet" }, { &irGainSlider, "irGain" },
         { &outputSlider, "output" }, { &toneSlider, "tone" }, { &inHPSlider, "inHP" },
         { &inLPSlider, "inLP" }, { &preDelaySlider, "preDelay" }, { &widthSlider, "width" },
+        { &feedbackSlider, "feedback" }, { &dampSlider, "damp" },
         { &msBassSlider, "msBass" }, { &duckSlider, "duck" }, { &duckRelSlider, "duckRelease" },
         { &fadeInSlider, "fadeIn" }, { &decaySlider, "decay" }, { &taperSlider, "taper" }
     };
@@ -614,7 +624,8 @@ void ConvoAudioProcessorEditor::resized()
 
     area.removeFromTop (12);
     auto row1 = area.removeFromTop (170);
-    prePanel  = row1.removeFromLeft (290);   // PRE: pre-convolution filters (In HP / In LP / Bass Mono)
+    // split PRE (3 knobs) / POST (8 knobs) ~proportionally so the cells stay roughly even-width
+    prePanel  = row1.removeFromLeft (juce::roundToInt ((row1.getWidth() - 10) * 3.0f / 11.0f));
     row1.removeFromLeft (10);
     postPanel = row1;                         // POST: post-conv shaping + mix
     area.removeFromTop (10);
@@ -645,10 +656,12 @@ void ConvoAudioProcessorEditor::resized()
     }
     {   // POST — post-convolution shaping + final mix
         auto row = knobArea (postPanel);
-        const int cellW = row.getWidth() / 6;
+        const int cellW = row.getWidth() / 8;
         placeKnob (row.removeFromLeft (cellW), toneSlider,     toneLabel);
         placeKnob (row.removeFromLeft (cellW), widthSlider,    widthLabel);
         placeKnob (row.removeFromLeft (cellW), preDelaySlider, preDelayLabel);
+        placeKnob (row.removeFromLeft (cellW), feedbackSlider, feedbackLabel);
+        placeKnob (row.removeFromLeft (cellW), dampSlider,     dampLabel);
         placeKnob (row.removeFromLeft (cellW), drySlider,      dryLabel);
         placeKnob (row.removeFromLeft (cellW), wetSlider,      wetLabel);
         placeKnob (row.removeFromLeft (cellW), outputSlider,   outputLabel);
