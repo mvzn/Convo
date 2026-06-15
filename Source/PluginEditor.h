@@ -45,12 +45,13 @@ private:
                         const juce::ColourGradient& fill);
     void renderOverlay();              // (re)build the cached EQ curve + bass-mono marker on param/size change
     void drawFilterOverlay (juce::Graphics&);   // stroke the cached overlay over the wave (no recompute)
-    void updateKnobStates();           // dim (grey out) knobs sitting at a no-op value
+    void updateKnobStates();           // dim Bass Mono while Mid/Side is off (its only no-op state)
     float uiScale() const;             // physical px per logical px, for crisp caches
 
     ConvoAudioProcessor& processor;
 
     ConvoLookAndFeel lookAndFeel;
+    juce::TooltipWindow tooltipWindow { this, 600 };   // shows the controls' setTooltip text on hover
 
     // IR display (shows the *processed* IR)
     juce::AudioFormatManager  thumbnailFormatManager;
