@@ -323,14 +323,19 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         magIn = juce::jmax (magIn, inWork.getMagnitude (ch, 0, numSamples));
     inputLevel.store (juce::jmax (magIn, inputLevel.load() * 0.85f));
 
-    // dry-reference loudness for adaptive wet comp, taken off the live (pre-delay) input
-    float drySumSq = 0.0f;
-    for (int ch = 0; ch < numCh; ++ch)
+    // dry-reference loudness for adaptive wet comp — only computed when Wet Comp is on
+    const bool wetCompActive = wetCompParam->load() > 0.5f;
+    float dryRms = 0.0f;
+    if (wetCompActive)
     {
-        const float r = inWork.getRMSLevel (ch, 0, numSamples);
-        drySumSq += r * r;
+        float drySumSq = 0.0f;
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            const float r = inWork.getRMSLevel (ch, 0, numSamples);
+            drySumSq += r * r;
+        }
+        dryRms = std::sqrt (drySumSq / (float) numCh);
     }
-    const float dryRms = std::sqrt (drySumSq / (float) numCh);
 
     // --- wet = convolved copy of the input ---
     for (int ch = 0; ch < numCh; ++ch)
@@ -417,19 +422,28 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         highShelf.process (wctx);
     }
 
-    // width (M/S) on the wet, smoothed per sample (stereo only)
+    // width (M/S) on the wet, smoothed per sample (stereo only). Skipped when steady at
+    // 100%: there w == 1 and mid +/- side reconstructs L/R bit-exactly, so the loop is a
+    // no-op pass we can avoid (the common default case).
     if (numCh >= 2)
     {
         widthSm.setTargetValue (widthParam->load() * 0.01f);
-        auto* L = wetWork.getWritePointer (0);
-        auto* R = wetWork.getWritePointer (1);
-        for (int i = 0; i < numSamples; ++i)
+        if (widthSm.isSmoothing() || ! juce::approximatelyEqual (widthSm.getTargetValue(), 1.0f))
         {
-            const float w    = widthSm.getNextValue();
-            const float mid  = 0.5f * (L[i] + R[i]);
-            const float side = 0.5f * (L[i] - R[i]) * w;
-            L[i] = mid + side;
-            R[i] = mid - side;
+            auto* L = wetWork.getWritePointer (0);
+            auto* R = wetWork.getWritePointer (1);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float w    = widthSm.getNextValue();
+                const float mid  = 0.5f * (L[i] + R[i]);
+                const float side = 0.5f * (L[i] - R[i]) * w;
+                L[i] = mid + side;
+                R[i] = mid - side;
+            }
+        }
+        else
+        {
+            widthSm.skip (numSamples);
         }
     }
     else
@@ -464,20 +478,19 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         }
     }
 
-    // wet loudness (post wet-chain, pre-gain) for adaptive wet comp
-    float wetSumSq = 0.0f;
-    for (int ch = 0; ch < numCh; ++ch)
+    // adaptive wet gain compensation (dry-referenced, tail-safe). Both RMS passes are skipped
+    // when Wet Comp is off (gate computed above); chase the dry/wet ratio only while the input
+    // is live, hold otherwise so reverb tails ring out. The 0.25 s smoother does the rest.
+    if (wetCompActive)
     {
-        const float r = wetWork.getRMSLevel (ch, 0, numSamples);
-        wetSumSq += r * r;
-    }
-    const float wetRms = std::sqrt (wetSumSq / (float) numCh);
+        float wetSumSq = 0.0f;     // wet loudness (post wet-chain, pre-gain)
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            const float r = wetWork.getRMSLevel (ch, 0, numSamples);
+            wetSumSq += r * r;
+        }
+        const float wetRms = std::sqrt (wetSumSq / (float) numCh);
 
-    // adaptive wet gain compensation (dry-referenced, tail-safe): chase the dry/wet
-    // ratio only while the input is live; hold it otherwise so reverb tails ring out
-    // instead of being pumped up during silence. The 0.25 s smoother does the rest.
-    if (wetCompParam->load() > 0.5f)
-    {
         if (dryRms > 0.0018f && wetRms > 1.0e-6f)                       // gate ~ -55 dBFS RMS
             wetCompTarget = juce::jlimit (0.125f, 8.0f, dryRms / wetRms); // clamp to +/-18 dB
         wetCompSm.setTargetValue (wetCompTarget);
@@ -585,17 +598,22 @@ void ConvoAudioProcessor::timerCallback()
     {
         const bool msChanged     = (cur.msMode   != lastBaked.msMode);
         const bool targetChanged = (cur.filterIR != lastBaked.filterIR);
+        // M/S and the filter-target change audio-thread routing; Reverse and Raw IR change the
+        // kernel abruptly (reversal / a big level jump). All four are discrete toggles, so arm
+        // the output fade to mask the swap and keep the toggle click-free. The continuous knobs
+        // (fade-in/decay/taper) are dragged, so they keep relying on JUCE's seamless kernel
+        // crossfade — arming the fade on every drag tick would pump the output.
+        const bool toggleChanged = msChanged || targetChanged
+                                 || (cur.reverse   != lastBaked.reverse)
+                                 || (cur.autoLevel != lastBaked.autoLevel);
         convolution.rebake (irLibrary.getIR(), irLibrary.getSampleRate(), cur, bakedIR);
         bakedIRSampleRate = irLibrary.getSampleRate();
         lastBaked = cur;
         tailSeconds.store ((float) (bakedIR.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
 
-        // M/S and the filter-target both change the audio-thread routing, so publish the
-        // new state and arm the output fade to mask the kernel re-encode + routing flip
-        // (the other bake knobs don't change routing, so JUCE's kernel crossfade suffices)
         if (msChanged)     msActive.store (cur.msMode);
         if (targetChanged) filterInput.store (! cur.filterIR);
-        if (msChanged || targetChanged) loadFadePending.store (true);
+        if (toggleChanged) loadFadePending.store (true);
         bakeGeneration.fetch_add (1);
     }
     lastSeenBakeParams = cur;

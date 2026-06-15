@@ -57,6 +57,8 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
     if (numCh == 0 || n == 0 || irSampleRate <= 0.0)
         return {};
 
+    juce::ScopedNoDenormals noDenormals;   // flush denormals in the offline decay/taper/filter math
+
     juce::AudioBuffer<float> out;
     out.makeCopyOf (raw);
 

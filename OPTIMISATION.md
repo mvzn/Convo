@@ -1,9 +1,14 @@
 # Optimisation findings — processing side
 
-Investigation only — **nothing here is implemented**. Each item lists the cost, a
-recommended fix, the trade-off, and a rough impact/effort. UI-handling optimisations are
-implemented separately on this branch (see the editor changes); this document is the DSP/
-processing backlog.
+Each item lists the cost, a recommended fix, the trade-off, and a rough impact/effort.
+
+**Status (on `optimisation`):** the safe wins are now implemented — **#2** (gate the Wet-Comp
+RMS passes), **#3 (width only)** (skip the M/S width loop when steady at 100 %), and **#5**
+(denormal hygiene in `bake()`). The stateful sub-items of #3 (Tone shelves, Input HP/LP,
+Pre-Delay) were **deferred**: gating a filter/delay-line mid-signal needs reset-on-re-engage and
+risks a tiny transient that can't be audibly verified here — leave for on-device testing. **#1**
+(non-uniform partitioning) and **#4**/**#6** are not implemented (Release already handles long
+IRs). UI-handling optimisations are implemented separately on this branch (see the editor).
 
 Reference build to reason about: `Release` (`-O3` + JUCE recommended LTO). The audio thread
 already runs under `juce::ScopedNoDenormals` and pre-allocates in `prepareToPlay`.
