@@ -711,6 +711,96 @@ void test_bass_mono()
     std::printf ("        (side L2 %.3f -> %.3f)\n", sideBefore, sideAfter);
 }
 
+// =========================================================================
+// bake: IR time-stretch resamples the kernel length  (archetype: bake length)
+// =========================================================================
+void test_bake_stretch()
+{
+    std::printf ("\n== bake: IR stretch ==\n");
+    const int n = 1000;
+    juce::AudioBuffer<float> raw (1, n);
+    juce::Random rng (123);
+    for (int i = 0; i < n; ++i) raw.setSample (0, i, rng.nextFloat() * 2.0f - 1.0f);
+
+    IRBakeParams bp; bp.decayOff = true; bp.taperMs = 0.0f; bp.fadeInMs = 0.0f;   // length == stretched length
+
+    bp.stretch = 2.0f;
+    auto up = ConvolutionEngine::bake (raw, kFs, bp);
+    expectTrue (std::abs (up.getNumSamples() - 2 * n) <= 1, "stretch 2.0x ~doubles the kernel length");
+
+    bp.stretch = 0.5f;
+    auto down = ConvolutionEngine::bake (raw, kFs, bp);
+    expectTrue (std::abs (down.getNumSamples() - n / 2) <= 1, "stretch 0.5x ~halves the kernel length");
+
+    bp.stretch = 1.0f;
+    auto same = ConvolutionEngine::bake (raw, kFs, bp);
+    expectTrue (same.getNumSamples() == n, "stretch 1.0x leaves the length unchanged");
+
+    bool finite = true;
+    for (int i = 0; i < up.getNumSamples(); ++i) finite = finite && std::isfinite (up.getSample (0, i));
+    expectTrue (finite, "stretched kernel is finite");
+    std::printf ("        (len %d -> 2.0x:%d  0.5x:%d)\n", n, up.getNumSamples(), down.getNumSamples());
+}
+
+// =========================================================================
+// feedback loop stability — a regenerating convolution at MAX feedback, with the
+// in-loop soft-clip + damping LP, must stay finite and bounded (no blow-up).
+// (archetype: the "send it to test, find the edges of blow-outs" feedback check)
+// =========================================================================
+void test_feedback_stability()
+{
+    std::printf ("\n== feedback loop stability (max feedback) ==\n");
+    ConvolutionEngine eng;
+    constexpr int blockLen = 512;
+    juce::dsp::ProcessSpec spec { kFs, blockLen, 2 };
+    eng.prepare (spec);
+
+    juce::Random irRng (5);
+    juce::AudioBuffer<float> ir (2, (int) (0.5 * kFs));   // hot full-scale noise IR (auto-leveled)
+    for (int c = 0; c < 2; ++c)
+        for (int i = 0; i < ir.getNumSamples(); ++i)
+            ir.setSample (c, i, irRng.nextFloat() * 2.0f - 1.0f);
+    IRBakeParams bp; juce::AudioBuffer<float> baked; eng.loadIR (ir, kFs, bp, baked);
+
+    juce::AudioBuffer<float> buf (2, blockLen);
+    int guard = 0;
+    while (! eng.hasIR() && guard++ < 4000) { buf.clear(); juce::dsp::AudioBlock<float> b (buf); eng.process (b); juce::Thread::sleep (1); }
+    expectTrue (eng.hasIR(), "kernel went live");
+
+    // mirror the processor's block-granular loop: the previous block's convolved output, damped
+    // (one-pole LP ~7 kHz) and soft-clipped, is mixed back into the input at max feedback (0.95).
+    const float fbAmt = 0.95f;
+    const float dampA = 1.0f - std::exp (-2.0f * juce::MathConstants<float>::pi * 7000.0f / (float) kFs);
+    juce::AudioBuffer<float> fbState (2, blockLen); fbState.clear();
+    float dampZ[2] = { 0.0f, 0.0f };
+
+    double peak = 0.0; bool finite = true;
+    const int blocks = (int) (4.0 * kFs / blockLen);   // 4 s of regeneration after a single impulse
+    for (int blk = 0; blk < blocks; ++blk)
+    {
+        for (int c = 0; c < 2; ++c)
+            for (int i = 0; i < blockLen; ++i)
+            {
+                const float dry = (blk == 0 && i == 0) ? 1.0f : 0.0f;   // one impulse, then silence
+                buf.setSample (c, i, dry + fbAmt * convo::softClip (fbState.getSample (c, i)));
+            }
+        juce::dsp::AudioBlock<float> block (buf);
+        eng.process (block);
+        for (int c = 0; c < 2; ++c)
+            for (int i = 0; i < blockLen; ++i)
+            {
+                const float x = buf.getSample (c, i);
+                finite = finite && std::isfinite (x);
+                peak   = juce::jmax (peak, (double) std::abs (x));
+                dampZ[c] += dampA * (x - dampZ[c]);
+                fbState.setSample (c, i, dampZ[c]);
+            }
+    }
+    expectTrue (finite,        "feedback loop stays finite (no NaN/inf) at max feedback");
+    expectTrue (peak < 12.0,   "feedback loop stays bounded at max feedback (in-loop soft-clip + damping)");
+    std::printf ("        (peak over 4 s at 0.95 feedback: %.2f)\n", peak);
+}
+
 } // namespace
 
 int main()
@@ -741,6 +831,8 @@ int main()
     test_issupported();
     test_irlibrary_cap();
     test_conv_nan_smoke();
+    test_bake_stretch();
+    test_feedback_stability();
 
     std::printf ("\n====================\n%d passed, %d failed\n", gPasses, gFails);
     return gFails == 0 ? 0 : 1;

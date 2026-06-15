@@ -92,6 +92,7 @@ private:
     std::atomic<float>* fadeInParam   = nullptr;
     std::atomic<float>* decayParam    = nullptr;
     std::atomic<float>* taperParam    = nullptr;
+    std::atomic<float>* stretchParam  = nullptr;
     std::atomic<float>* reverseParam  = nullptr;
     std::atomic<float>* rawLevelParam = nullptr;
     std::atomic<float>* clipGuardParam = nullptr;

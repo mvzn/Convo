@@ -60,6 +60,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setup (fadeInSlider,   fadeInLabel,   "Fade In");
     setup (decaySlider,    decayLabel,    "Decay");
     setup (taperSlider,    taperLabel,    "Taper");
+    setup (stretchSlider,  stretchLabel,  "Stretch");
 
     reverseButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);    // green = active
     clipGuardButton.setColour (juce::ToggleButton::tickColourId, ConvoColours::mint);
@@ -111,6 +112,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     decaySlider.setTooltip   ("Imposes an exponential decay on the IR (-60 dB at this time) and truncates "
                               "the tail. Fully clockwise = Off (tail as recorded)");
     taperSlider.setTooltip   ("Raised-cosine fade-out baked onto the IR's tail to de-click the kernel end");
+    stretchSlider.setTooltip ("Time-stretch the IR (resampled in the bake): below 100% shortens it, "
+                              "above 100% lengthens it. 100% = off");
 
     // --- output guards / global ---
     clipGuardButton.setTooltip ("Soft-clip ceiling on the final output: transparent below -2.5 dBFS, "
@@ -143,6 +146,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     fadeInAtt   = std::make_unique<SliderAttachment> (apvts, "fadeIn",      fadeInSlider);
     decayAtt    = std::make_unique<SliderAttachment> (apvts, "decay",       decaySlider);
     taperAtt    = std::make_unique<SliderAttachment> (apvts, "taper",       taperSlider);
+    stretchAtt  = std::make_unique<SliderAttachment> (apvts, "stretch",     stretchSlider);
     reverseAtt   = std::make_unique<ButtonAttachment> (apvts, "reverse",   reverseButton);
     rawLevelAtt  = std::make_unique<ButtonAttachment> (apvts, "irRaw",     rawLevelButton);
     filterIRAtt  = std::make_unique<ButtonAttachment> (apvts, "filterIR",  filterIRButton);
@@ -161,7 +165,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
         { &inLPSlider, "inLP" }, { &preDelaySlider, "preDelay" }, { &widthSlider, "width" },
         { &feedbackSlider, "feedback" }, { &dampSlider, "damp" },
         { &msBassSlider, "msBass" }, { &duckSlider, "duck" }, { &duckRelSlider, "duckRelease" },
-        { &fadeInSlider, "fadeIn" }, { &decaySlider, "decay" }, { &taperSlider, "taper" }
+        { &fadeInSlider, "fadeIn" }, { &decaySlider, "decay" }, { &taperSlider, "taper" },
+        { &stretchSlider, "stretch" }
     };
     for (auto& u : unitSliders)
     {
@@ -674,11 +679,12 @@ void ConvoAudioProcessorEditor::resized()
     }
     {   // IR SHAPE — everything that changes the IR bake, plus IR Gain
         auto row = knobArea (shapePanel);
-        const int cellW = row.getWidth() / 5;     // 4 knobs + a toggle column
+        const int cellW = row.getWidth() / 6;     // 5 knobs + a toggle column
         placeKnob (row.removeFromLeft (cellW), irGainSlider, irGainLabel);
         placeKnob (row.removeFromLeft (cellW), fadeInSlider, fadeInLabel);
         placeKnob (row.removeFromLeft (cellW), decaySlider,  decayLabel);
         placeKnob (row.removeFromLeft (cellW), taperSlider,  taperLabel);
+        placeKnob (row.removeFromLeft (cellW), stretchSlider, stretchLabel);
         auto cell = row.removeFromLeft (cellW);
         auto toggles = cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 6, 104), 28 * 4 + 6 * 3);
         reverseButton.setBounds  (toggles.removeFromTop (28));

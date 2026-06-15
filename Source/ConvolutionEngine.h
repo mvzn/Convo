@@ -22,10 +22,13 @@ struct IRBakeParams
                                // the input at runtime (cutoffs below; only used when true)
     float inHPHz = 20.0f;      // first-order high-pass cutoff baked into the kernel
     float inLPHz = 20000.0f;   // first-order low-pass  cutoff baked into the kernel
+    float stretch = 1.0f;      // time-stretch factor: resample the IR to this multiple of its
+                               // length before windowing (1.0 = off; <1 shortens, >1 lengthens)
 
     bool operator== (const IRBakeParams& o) const noexcept
     {
         return juce::approximatelyEqual (fadeInMs, o.fadeInMs)
+            && juce::approximatelyEqual (stretch, o.stretch)
             && juce::approximatelyEqual (decaySeconds, o.decaySeconds)
             && decayOff == o.decayOff
             && juce::approximatelyEqual (taperMs, o.taperMs)

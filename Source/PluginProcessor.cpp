@@ -30,6 +30,7 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     fadeInParam   = apvts.getRawParameterValue ("fadeIn");
     decayParam    = apvts.getRawParameterValue ("decay");
     taperParam    = apvts.getRawParameterValue ("taper");
+    stretchParam  = apvts.getRawParameterValue ("stretch");
     reverseParam  = apvts.getRawParameterValue ("reverse");
     rawLevelParam = apvts.getRawParameterValue ("irRaw");
     clipGuardParam = apvts.getRawParameterValue ("clipGuard");
@@ -132,6 +133,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "taper", 1 }, "Taper",
         NormalisableRange<float> (0.0f, 500.0f, 1.0f), 10.0f, "ms"));
+
+    // time-stretch the IR (resampled in bake): <100% shortens, >100% lengthens. 100% = off.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "stretch", 1 }, "Stretch",
+        NormalisableRange<float> (25.0f, 400.0f, 1.0f, 0.5f), 100.0f, "%"));
 
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "reverse", 1 }, "Reverse", false));
@@ -658,6 +664,7 @@ IRBakeParams ConvoAudioProcessor::currentBakeParams() const
     p.decayOff     = dec >= kDecayOffMs - 0.5f;
     p.decaySeconds = dec * 0.001f;
     p.taperMs      = taperParam->load();
+    p.stretch      = stretchParam->load() * 0.01f;   // % -> factor
     p.reverse      = reverseParam->load() > 0.5f;
     p.autoLevel    = rawLevelParam->load() < 0.5f;
     p.msMode       = msParam->load() > 0.5f;
