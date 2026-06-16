@@ -133,8 +133,9 @@ void ConvoLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& 
     if (onColour == Colour())               // fall back if no per-button colour set
         onColour = ConvoColours::mint;
 
-    auto b   = button.getLocalBounds().toFloat();
-    auto led = b.removeFromLeft (b.getHeight()).reduced (4.0f);
+    auto b      = button.getLocalBounds().toFloat();
+    auto ledCol = b.removeFromRight (juce::jmin (b.getHeight(), 22.0f));               // LED column, right of the label
+    auto led    = ledCol.withSizeKeepingCentre (ledCol.getWidth() - 6.0f, ledCol.getWidth() - 6.0f);   // keep it SQUARE
 
     if (on)   // soft glow
     {
@@ -149,7 +150,7 @@ void ConvoLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& 
 
     g.setColour (shouldDrawButtonAsHighlighted ? ConvoColours::text : ConvoColours::label);
     g.setFont (14.0f);
-    g.drawText (button.getButtonText(), b.reduced (6.0f, 0.0f), Justification::centredLeft);
+    g.drawText (button.getButtonText(), b.reduced (6.0f, 0.0f), Justification::centredRight);
 }
 
 void ConvoLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& button,

@@ -54,11 +54,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     // --- real-time signal controls ---
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "dry", 1 }, "Dry",
-        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -12.0f, "dB"));
+        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), 0.0f, "dB"));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "wet", 1 }, "Wet",
-        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -12.0f, "dB"));
+        NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -60.0f, "dB"));
 
     // gain of the IR itself — scales the impulse convolved with the input.
     // applied at the convolved output (identical by linearity, but real-time

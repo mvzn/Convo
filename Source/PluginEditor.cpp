@@ -345,7 +345,7 @@ void ConvoAudioProcessorEditor::renderBackground()
         const auto title = juce::String ("Convo");
         // nudge the wordmark up a few px: the 26 pt bold's large descent makes box-centred
         // text sit visually low next to the small-caps tagline / toggle row
-        g.drawText (title, h.removeFromLeft (92).translated (0, -3), juce::Justification::centredLeft);
+        g.drawText (title, h.removeFromLeft (92).translated (0, -2), juce::Justification::centredLeft);
 
         g.setColour (ConvoColours::mint.withAlpha (0.85f));
         g.fillRect (h.getX() + 2, headerZone.getCentreY() - 8, 2, 16);
@@ -865,7 +865,7 @@ void ConvoAudioProcessorEditor::resized()
     inner.removeFromTop (10);   // match the 10 px gap between knob groups
     waveZone = inner;
 
-    area.removeFromTop (12);
+    area.removeFromTop (10);
     auto row1 = area.removeFromTop (170);
     // split PRE (3 knobs) / POST (6 knobs) ~proportionally so the cells stay roughly even-width
     prePanel  = row1.removeFromLeft (juce::roundToInt ((row1.getWidth() - 10) * 3.0f / 11.0f));
@@ -915,21 +915,26 @@ void ConvoAudioProcessorEditor::resized()
     }
     {   // IR SHAPE — everything that changes the IR bake, plus IR Gain
         auto row = knobArea (shapePanel);
-        const int cellW = row.getWidth() / 6;     // 5 knobs + a toggle column
+        const int togColW = 130;                              // room for the label + the right-side LED
+        const int cellW   = (row.getWidth() - togColW) / 5;   // 5 knobs, a touch narrower so the toggles get room
         placeKnob (row.removeFromLeft (cellW), irGainSlider, irGainLabel);
         placeKnob (row.removeFromLeft (cellW), fadeInSlider, fadeInLabel);
         placeKnob (row.removeFromLeft (cellW), decaySlider,  decayLabel);
         placeKnob (row.removeFromLeft (cellW), taperSlider,  taperLabel);
         placeKnob (row.removeFromLeft (cellW), stretchSlider, stretchLabel);
-        auto cell = row.removeFromLeft (cellW);
-        auto toggles = cell.withSizeKeepingCentre (juce::jmin (cell.getWidth() - 6, 104), 28 * 4 + 6 * 3);
-        reverseButton.setBounds  (toggles.removeFromTop (28));
-        toggles.removeFromTop (6);
-        rawLevelButton.setBounds (toggles.removeFromTop (28));
-        toggles.removeFromTop (6);
-        filterIRButton.setBounds (toggles.removeFromTop (28));
-        toggles.removeFromTop (6);
-        msButton.setBounds       (toggles.removeFromTop (28));
+        auto cell = row;   // toggle column = the remaining ~togColW
+        // LED box (now right of each label) lines up vertically under the Output knob
+        const int btnH = 28, gap = 6, colH = btnH * 4 + gap * 3;
+        const int togRight = outputSlider.getBounds().getCentreX() + 11;   // box centre -> Output knob centre x
+        auto toggles = juce::Rectangle<int> (cell.getX(), cell.getCentreY() - colH / 2,
+                                             togRight - cell.getX(), colH);
+        reverseButton.setBounds  (toggles.removeFromTop (btnH));
+        toggles.removeFromTop (gap);
+        rawLevelButton.setBounds (toggles.removeFromTop (btnH));
+        toggles.removeFromTop (gap);
+        filterIRButton.setBounds (toggles.removeFromTop (btnH));
+        toggles.removeFromTop (gap);
+        msButton.setBounds       (toggles.removeFromTop (btnH));
     }
 
     renderBackground();
