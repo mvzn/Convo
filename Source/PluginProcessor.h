@@ -63,6 +63,7 @@ public:
 
     float getInputLevel()  const noexcept { return inputLevel.load(); }
     float getOutputLevel() const noexcept { return outputLevel.load(); }
+    float getIRLevel()     const noexcept { return irLevel.load(); }   // convolved signal x IR Gain
 
     // Baked (processed) IR for the editor's thumbnail. All accessed on the message thread.
     int getBakeGeneration() const noexcept { return bakeGeneration.load(); }
@@ -144,6 +145,7 @@ private:
     std::atomic<int>   bakeGeneration  { 0 };
     std::atomic<float> inputLevel  { 0.0f };
     std::atomic<float> outputLevel { 0.0f };
+    std::atomic<float> irLevel     { 0.0f };   // convolved (wet) signal x IR Gain, for the IR meter
     std::atomic<float> tailSeconds { 0.0f };         // baked IR length + max pre-delay
     std::atomic<bool>  msActive    { false };        // audio thread M/S-encodes iff the live kernel is M/S
     std::atomic<bool>  filterInput { true };         // runtime input filter on iff the kernel is unfiltered

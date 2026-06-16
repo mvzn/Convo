@@ -115,9 +115,10 @@ private:
 
     // meters: shown values + slower-decaying peak-hold lines, with last-painted
     // copies so the timer can skip repaints when nothing moved
-    float inMeter = 0.0f, outMeter = 0.0f;
-    float inPeak  = 0.0f, outPeak  = 0.0f;
+    float inMeter = 0.0f, outMeter = 0.0f, irMeter = 0.0f;
+    float inPeak  = 0.0f, outPeak  = 0.0f, irPeak  = 0.0f;
     float inShown = -1.0f, outShown = -1.0f, inPeakShown = -1.0f, outPeakShown = -1.0f;
+    float irShown = -1.0f, irPeakShown = -1.0f;
 
     // last-seen values of the overlay params (tone / In HP / In LP / Bass Mono / M/S) so the
     // timer can repaint the wave layer when they move — they are not bake params
@@ -137,7 +138,7 @@ private:
     juce::Path eqCurvePath;
     float      monoMarkerX = -1.0f;    // bass-mono marker x in waveZone coords; < 0 = hidden
     juce::dsp::IIR::Coefficients<float>::Ptr eqLo, eqHi, eqHp, eqLp;  // reused -> no per-redraw alloc
-    juce::ColourGradient inMeterGrad, outMeterGrad;   // cached -> no per-frame gradient alloc
+    juce::ColourGradient inMeterGrad, outMeterGrad, irMeterGrad;   // cached -> no per-frame gradient alloc
 
     std::unique_ptr<juce::FileChooser> chooser;
 
@@ -150,7 +151,7 @@ private:
 
     // layout regions (used by paint)
     juce::Rectangle<int> headerZone, dropZone, waveZone, inMeterZone, outMeterZone,
-                         prePanel, postPanel, duckPanel, shapePanel;
+                         prePanel, postPanel, duckPanel, shapePanel, irMeterZone;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessorEditor)
 };

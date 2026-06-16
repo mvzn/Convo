@@ -396,6 +396,33 @@ void ConvoAudioProcessorEditor::renderBackground()
     panel (duckPanel,   "DUCKING");
     panel (shapePanel,  "IR SHAPE");
 
+    // IR meter: a slim recessed level well (matching the in/out meter wells) with a fine dB scale
+    // and an "IR" cap, in the strip left of the IR SHAPE knobs. The live fill is drawn in paint().
+    if (! irMeterZone.isEmpty())
+    {
+        auto t = irMeterZone.toFloat();
+        g.setColour (juce::Colour (0xff0a0e10));                           // recessed well (same as in/out)
+        g.fillRoundedRectangle (t, 2.0f);
+        g.setColour (ConvoColours::border);
+        g.drawRoundedRectangle (t, 2.0f, 1.0f);
+
+        constexpr float lo = -60.0f, hi = 6.0f;                            // matches the irGain range
+        struct { float db; const char* txt; } marks[] = { { 0.0f, "0" }, { -12.0f, "-12" }, { -24.0f, "-24" }, { -48.0f, "-48" } };
+        g.setFont (juce::Font (juce::FontOptions (8.5f)));
+        for (const auto& m : marks)
+        {
+            const float y = t.getBottom() - (m.db - lo) / (hi - lo) * t.getHeight();
+            g.setColour (ConvoColours::border.withAlpha (0.7f));
+            g.fillRect (t.getRight() + 2.0f, y - 0.5f, 3.0f, 1.0f);
+            g.setColour (ConvoColours::textDim.withAlpha (0.65f));
+            g.drawText (m.txt, juce::Rectangle<float> (t.getRight() + 6.0f, y - 6.0f, 26.0f, 12.0f), juce::Justification::centredLeft);
+        }
+
+        g.setColour (ConvoColours::mint.withAlpha (0.85f));                // "IR" cap above the track
+        g.setFont (captionFont());
+        g.drawText ("IR", juce::Rectangle<int> (irMeterZone.getX() - 2, irMeterZone.getY() - 15, 34, 13), juce::Justification::centredLeft);
+    }
+
     // meter wells with faint scale ticks, labels underneath
     for (const auto& zone : { inMeterZone, outMeterZone })
     {
@@ -814,6 +841,15 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
         drawMeterFill (g, inMeterZone, inMeter, inPeak, inMeterGrad);
     if (clip.intersects (outMeterZone))
         drawMeterFill (g, outMeterZone, outMeter, outPeak, outMeterGrad);
+
+    // IR meter: the live IR level (convolved x IR Gain) as a slim gradient fill + peak line,
+    // dB-mapped (-60..+6) onto the scale; reuses the in/out meter drawing for a consistent look
+    if (! irMeterZone.isEmpty() && clip.intersects (irMeterZone))
+    {
+        auto toFrac = [] (float mag)
+        { return juce::jlimit (0.0f, 1.0f, ((float) juce::Decibels::gainToDecibels (mag, -60.0f) + 60.0f) / 66.0f); };
+        drawMeterFill (g, irMeterZone, toFrac (irMeter), toFrac (irPeak), irMeterGrad);
+    }
 }
 
 void ConvoAudioProcessorEditor::resized()
@@ -914,20 +950,27 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (row.removeFromLeft (cellW), duckRelSlider, duckRelLabel);
     }
     {   // IR SHAPE — everything that changes the IR bake, plus IR Gain
-        auto row = knobArea (shapePanel);
-        const int togColW = 130;                              // room for the label + the right-side LED
-        const int cellW   = (row.getWidth() - togColW) / 5;   // 5 knobs, a touch narrower so the toggles get room
-        placeKnob (row.removeFromLeft (cellW), irGainSlider, irGainLabel);
-        placeKnob (row.removeFromLeft (cellW), fadeInSlider, fadeInLabel);
-        placeKnob (row.removeFromLeft (cellW), decaySlider,  decayLabel);
-        placeKnob (row.removeFromLeft (cellW), taperSlider,  taperLabel);
-        placeKnob (row.removeFromLeft (cellW), stretchSlider, stretchLabel);
-        auto cell = row;   // toggle column = the remaining ~togColW
-        // LED box (now right of each label) lines up vertically under the Output knob
+        // same knob size as POST: reuse POST's column grid, so the 5 knobs line up under Tone..Wet
+        // (Stretch under Wet) and the toggle column sits under the Output column
+        auto row     = knobArea (shapePanel);
+        auto postRow = knobArea (postPanel);
+        const int cw = postRow.getWidth() / 6;
+        auto col = [&] (int i) { return juce::Rectangle<int> (postRow.getX() + i * cw, row.getY(), cw, row.getHeight()); };
+        // IR meter: a slim recessed level meter in the strip left of the first knob (16px of
+        // headroom at the top for the "IR" cap); shares the in/out meter gradient
+        irMeterZone = juce::Rectangle<int> (row.getX() + 6, row.getY() + 16, 9, row.getHeight() - 18);
+        irMeterGrad = meterGrad (irMeterZone);
+        placeKnob (col (0), irGainSlider, irGainLabel);    // under Tone
+        placeKnob (col (1), fadeInSlider, fadeInLabel);    // under Width
+        placeKnob (col (2), decaySlider,  decayLabel);     // under Pre-Delay
+        placeKnob (col (3), taperSlider,  taperLabel);     // under Dry
+        placeKnob (col (4), stretchSlider, stretchLabel);  // under Wet
+        // toggle column fills the Output column; LED right edge by the Output knob's right edge
         const int btnH = 28, gap = 6, colH = btnH * 4 + gap * 3;
-        const int togRight = outputSlider.getBounds().getCentreX() + 11;   // box centre -> Output knob centre x
-        auto toggles = juce::Rectangle<int> (cell.getX(), cell.getCentreY() - colH / 2,
-                                             togRight - cell.getX(), colH);
+        const int togLeft  = postRow.getX() + 5 * cw;
+        const int togRight = outputSlider.getBounds().getRight();
+        auto toggles = juce::Rectangle<int> (togLeft, row.getCentreY() - colH / 2,
+                                             togRight - togLeft, colH);
         reverseButton.setBounds  (toggles.removeFromTop (btnH));
         toggles.removeFromTop (gap);
         rawLevelButton.setBounds (toggles.removeFromTop (btnH));
@@ -988,8 +1031,10 @@ void ConvoAudioProcessorEditor::timerCallback()
 {
     inMeter  = processor.getInputLevel();
     outMeter = processor.getOutputLevel();
+    irMeter  = processor.getIRLevel();
     inPeak   = juce::jmax (inMeter,  inPeak  * 0.96f);   // peak line falls slower than the bar
     outPeak  = juce::jmax (outMeter, outPeak * 0.96f);
+    irPeak   = juce::jmax (irMeter,  irPeak  * 0.96f);
 
     const auto name = processor.getIRLibrary().getDisplayName();
     if (name != lastFileName)
@@ -1042,6 +1087,13 @@ void ConvoAudioProcessorEditor::timerCallback()
     {
         outShown = outMeter; outPeakShown = outPeak;
         repaint (outMeterZone);
+    }
+
+    // IR meter: repaint the impulse only when the live level (or its peak) visibly moved
+    if (moved (irMeter, irShown) || moved (irPeak, irPeakShown))
+    {
+        irShown = irMeter; irPeakShown = irPeak;
+        repaint (irMeterZone);
     }
 }
 

@@ -558,6 +558,14 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     const float relCoeff  = std::exp (-1.0f / juce::jmax (1.0f, relMs * 0.001f * (float) currentSampleRate));
     clipGuardSm.setTargetValue (clipGuardParam->load() > 0.5f ? 1.0f : 0.0f);
 
+    // IR meter: peak of the convolved (wet) signal scaled by IR Gain -> the IR path's level
+    // (decaying hold, same as the in/out meters; the dry/wet mix gains are not included)
+    float magWet = 0.0f;
+    for (int ch = 0; ch < numCh; ++ch)
+        magWet = juce::jmax (magWet, wetWork.getMagnitude (ch, 0, numSamples));
+    irLevel.store (juce::jmax (magWet * juce::Decibels::decibelsToGain (irGainParam->load(), -60.0f),
+                               irLevel.load() * 0.85f));
+
     for (int i = 0; i < numSamples; ++i)
     {
         // mono dry envelope (instant attack, param release) for ducking
