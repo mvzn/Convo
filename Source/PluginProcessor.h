@@ -68,6 +68,7 @@ public:
     int getBakeGeneration() const noexcept { return bakeGeneration.load(); }
     const juce::AudioBuffer<float>& getBakedIR() const noexcept { return bakedIR; }
     double getBakedIRSampleRate() const noexcept { return bakedIRSampleRate; }
+    const juce::AudioBuffer<float>& getKernelIR() const noexcept { return audioBakeScratch; }  // trimmed+shaped kernel (the selection layer)
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static constexpr float kDecayOffMs = 10000.0f;   // top of the Decay range == "Off"

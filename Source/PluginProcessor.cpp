@@ -727,9 +727,10 @@ void ConvoAudioProcessor::timerCallback()
                                  || (cur.reverse   != lastBaked.reverse)
                                  || (cur.autoLevel != lastBaked.autoLevel);
 
-        // The display shows the FULL IR — trim is a selection overlay, not baked into the picture.
-        // So the audio kernel always re-bakes (incl. trim), but the thumbnail rebuilds only when a
-        // NON-trim param changed: dragging Start/End reloads the kernel without re-rendering visuals.
+        // The display shows the FULL IR as the (blurred) backdrop, with the trimmed+shaped kernel
+        // drawn inside the selection. The backdrop only re-bakes when a NON-trim param changes; the
+        // generation bumps on every commit so the editor rebuilds the kernel layer — including on a
+        // trim-release, but never during a drag (the drag doesn't write the params).
         auto curDisp  = cur;       curDisp.startFrac  = 0.0f; curDisp.endFrac  = 1.0f;
         auto lastDisp = lastBaked; lastDisp.startFrac = 0.0f; lastDisp.endFrac = 1.0f;
         const bool displayChanged = (curDisp != lastDisp);
@@ -740,10 +741,9 @@ void ConvoAudioProcessor::timerCallback()
         lastBaked = cur;
 
         if (displayChanged)
-        {
             bakedIR = ConvolutionEngine::bake (irLibrary.getIR(), irLibrary.getSampleRate(), curDisp);
-            bakeGeneration.fetch_add (1);
-        }
+        bakeGeneration.fetch_add (1);   // every commit -> editor rebuilds the kernel layer (incl. trim-release)
+
         if (msChanged)     msActive.store (cur.msMode);
         if (targetChanged) filterInput.store (! cur.filterIR);
         if (toggleChanged) loadFadePending.store (true);

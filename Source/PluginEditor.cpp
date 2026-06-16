@@ -250,8 +250,25 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
         bakedLenText.clear();
     }
 
+    // kernel layer: the trimmed+shaped audio kernel, shown sharp inside the trim selection
+    {
+        const auto&  kir = processor.getKernelIR();
+        const double ksr = processor.getBakedIRSampleRate();
+        if (kir.getNumSamples() > 0 && ksr > 0.0)
+        {
+            const int kn = kir.getNumSamples();
+            kernelThumbnail = std::make_unique<juce::AudioThumbnail> (juce::jmax (1, kn / 1400),
+                                                                      thumbnailFormatManager, kernelThumbnailCache);
+            kernelThumbnail->reset (kir.getNumChannels(), ksr, kn);
+            kernelThumbnail->addBlock (0, kir, 0, kn);
+        }
+        else if (kernelThumbnail != nullptr)
+            kernelThumbnail->clear();
+    }
+
     lastBakeGen = processor.getBakeGeneration();
     renderWaveImage();
+    renderKernelImage();
     repaint (dropZone);
 }
 
@@ -286,6 +303,30 @@ void ConvoAudioProcessorEditor::renderWaveImage()
     juce::ImageConvolutionKernel blur (9);
     blur.createGaussianBlur (2.5f);
     blur.applyToImage (waveBlurImage, waveImage, waveBlurImage.getBounds());
+}
+
+// The trimmed+shaped kernel rendered across the full wave width; paint() scales it into the
+// selection rectangle so the fade/decay/taper land at the Start/End handles. Rebuilt only on a
+// commit (incl. trim-release), never during a drag.
+void ConvoAudioProcessorEditor::renderKernelImage()
+{
+    kernelImage = juce::Image();
+    if (waveZone.isEmpty() || kernelThumbnail == nullptr || kernelThumbnail->getTotalLength() <= 0.0)
+        return;
+
+    const float scale = uiScale();
+    const int   w     = juce::jmax (1, juce::roundToInt ((float) waveZone.getWidth()  * scale));
+    const int   h     = juce::jmax (1, juce::roundToInt ((float) waveZone.getHeight() * scale));
+
+    kernelImage = juce::Image (juce::Image::ARGB, w, h, true);
+    juce::Graphics g (kernelImage);
+    g.addTransform (juce::AffineTransform::scale (scale));
+
+    const auto local = juce::Rectangle<int> (waveZone.getWidth(), waveZone.getHeight());
+    g.setGradientFill (juce::ColourGradient (ConvoColours::mint, 0.0f, 0.0f,
+                                             ConvoColours::teal.withAlpha (0.75f),
+                                             0.0f, (float) local.getHeight(), false));
+    kernelThumbnail->drawChannels (g, local, 0.0, kernelThumbnail->getTotalLength(), 1.0f);
 }
 
 void ConvoAudioProcessorEditor::renderBackground()
@@ -744,7 +785,10 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
                 juce::Graphics::ScopedSaveState ss (g);
                 g.reduceClipRegion (juce::Rectangle<float> (sx, zf.getY(), juce::jmax (0.0f, ex - sx), zf.getHeight())
                                         .getSmallestIntegerContainer());
-                g.drawImage (waveImage, zf);   // selected region: sharp + full bright
+                if (activeHandle != TrimHandle::none || ! kernelImage.isValid())
+                    g.drawImage (waveImage, zf);   // dragging: sharp slice of the full IR (region preview)
+                else                               // committed: trimmed+shaped kernel (fade/decay/taper at the handles)
+                    g.drawImage (kernelImage, juce::Rectangle<float> (sx, zf.getY(), ex - sx, zf.getHeight()));
             }
 
             if (bakedLenText.isNotEmpty())
@@ -899,6 +943,7 @@ void ConvoAudioProcessorEditor::resized()
 
     renderBackground();
     renderWaveImage();
+    renderKernelImage();
     renderOverlay();
 }
 

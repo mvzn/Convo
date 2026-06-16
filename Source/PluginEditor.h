@@ -52,7 +52,8 @@ private:
     void promptSavePreset();               // async name prompt -> processor.savePreset
 
     void renderBackground();           // static chrome -> backgroundImage
-    void renderWaveImage();            // baked-IR waveform -> waveImage
+    void renderWaveImage();            // full-IR waveform -> waveImage (the trim backdrop)
+    void renderKernelImage();          // trimmed+shaped kernel -> kernelImage (the selection layer)
     void drawMeterFill (juce::Graphics&, juce::Rectangle<int> zone, float level, float peak,
                         const juce::ColourGradient& fill);
     void renderOverlay();              // (re)build the cached EQ curve + bass-mono marker on param/size change
@@ -80,6 +81,8 @@ private:
     // rebuilt per IR with a length-adaptive resolution (see rebuildThumbnail) so short,
     // heavily-decayed IRs don't render as a handful of wide min/max bricks
     std::unique_ptr<juce::AudioThumbnail> thumbnail;
+    juce::AudioThumbnailCache kernelThumbnailCache { 2 };
+    std::unique_ptr<juce::AudioThumbnail> kernelThumbnail;   // trimmed+shaped kernel, drawn inside the selection
     juce::Label               fileNameLabel;
     juce::TextButton          loadButton { "Load IR..." };
     juce::TextButton          presetButton { "Presets" };
@@ -143,7 +146,7 @@ private:
     std::unique_ptr<juce::AlertWindow> savePresetWindow;   // async "name this preset" dialog
 
     // cached chrome (rendered at physical resolution for HiDPI crispness)
-    juce::Image backgroundImage, waveImage, waveBlurImage;   // waveBlurImage: pre-blurred wave for the trim preview
+    juce::Image backgroundImage, waveImage, waveBlurImage, kernelImage;   // waveBlurImage: blurred backdrop; kernelImage: shaped kernel in the selection
 
     // layout regions (used by paint)
     juce::Rectangle<int> headerZone, dropZone, waveZone, inMeterZone, outMeterZone,
