@@ -196,7 +196,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     rebuildThumbnail();
 
-    setSize (900, 610);
+    setSize (900, 617);   // +7 px vs. before to keep the bottom row clear of the wider header gap
     startTimerHz (30);
 }
 
@@ -354,10 +354,13 @@ void ConvoAudioProcessorEditor::renderBackground()
         g.setFont (captionFont());
         g.drawText ("CONVOLUTION", h.withTrimmedLeft (12), juce::Justification::centredLeft);
 
-        // span the full content width (headerZone itself lost the bypass strip in resized())
+        // engraved header rule: a dark cut + a 1 px catch-light just below, so the divider reads
+        // as incised into the chassis (spans the full content width)
         const auto content = getLocalBounds().reduced (14);
-        g.setColour (ConvoColours::border.withAlpha (0.8f));
+        g.setColour (juce::Colours::black.withAlpha (0.55f));
         g.fillRect (content.getX(), headerZone.getBottom() + 3, content.getWidth(), 1);
+        g.setColour (ConvoColours::gunmetalHi.withAlpha (0.25f));
+        g.fillRect (content.getX(), headerZone.getBottom() + 4, content.getWidth(), 1);
     }
 
     auto panel = [&g] (juce::Rectangle<int> r, const juce::String& caption)
@@ -823,7 +826,7 @@ void ConvoAudioProcessorEditor::resized()
     clipGuardButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
     headerZone.removeFromRight (8);
     wetCompButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
-    area.removeFromTop (8);                                   // Mid/Side now lives in IR SHAPE (it's a bake param)
+    area.removeFromTop (15);   // 12 px of clear space below the header rule -> matches the graph<->PRE/POST gap
 
     auto topRow = area.removeFromTop (168);
     auto outCol = topRow.removeFromRight (26);
