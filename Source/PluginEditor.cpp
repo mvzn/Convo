@@ -52,7 +52,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setup (inLPSlider,     inLPLabel,     "In LP");
     setup (preDelaySlider, preDelayLabel, "Pre-Delay");
     setup (widthSlider,    widthLabel,    "Width");
-    setup (msBassSlider,   msBassLabel,   "Bass Mono");
+    setup (msBassSlider,   msBassLabel,   "X-Over");
     setup (duckSlider,     duckLabel,     "Duck");
     setup (duckRelSlider,  duckRelLabel,  "Release");
     setup (fadeInSlider,   fadeInLabel,   "Fade In");
@@ -75,10 +75,10 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     inHPSlider.setTooltip ("Pre-IR high-pass (low cut), 6 dB/oct, on the signal feeding the IR");
     inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 6 dB/oct, on the signal feeding the IR");
     fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp is capped at 80% of the IR length");
-    msButton.setTooltip   ("Mid/Side: convolve mid-with-mid and side-with-side (re-bakes the "
-                           "IR as M/S). Wants a stereo IR (a mono IR collapses to input to mono)");
-    msBassSlider.setTooltip ("Bass Mono (Mid/Side only): high-passes the side so content below "
-                             "the cutoff collapses to mono. 20 Hz = off");
+    msButton.setTooltip   ("Bass Mono: fold the wet below the X-Over frequency to mono, keeping "
+                           "everything above it stereo (unchanged from the feature being off)");
+    msBassSlider.setTooltip ("Bass Mono crossover: the wet collapses to mono below this "
+                             "frequency, stays stereo above (6 dB/oct). 20 Hz = off");
     filterIRButton.setTooltip ("Apply the In HP/In LP filter to the IR (baked, shown in the "
                                "display) instead of the input. Same sound; IR mode is cheaper "
                                "at runtime but re-bakes when you move the cutoffs");
@@ -527,7 +527,7 @@ void ConvoAudioProcessorEditor::renderOverlay()
         else        eqCurvePath.lineTo (x, y);
     }
 
-    if (apvts.getRawParameterValue ("ms")->load() > 0.5f)   // bass-mono marker (Mid/Side only)
+    if (apvts.getRawParameterValue ("ms")->load() > 0.5f)   // bass-mono crossover marker
     {
         const float bass = apvts.getRawParameterValue ("msBass")->load();
         if (bass > 21.0f)
@@ -749,7 +749,7 @@ void ConvoAudioProcessorEditor::mouseUp (const juce::MouseEvent&)
 }
 
 // Mode hints, polled at 30 Hz but only touched on a flip:
-//  - Bass Mono only does anything in Mid/Side mode, so dim it (interactive) while M/S is off.
+//  - The X-Over crossover only does anything when Bass Mono is on, so dim it while it's off.
 //  - In HP / In LP filter the input by default; when Filter IR is on they're baked into the IR
 //    instead, so relabel "In -> IR" and tint them mint (matching the Filter IR tick) to show it.
 void ConvoAudioProcessorEditor::updateKnobStates()
@@ -1050,7 +1050,7 @@ void ConvoAudioProcessorEditor::timerCallback()
     if (processor.getBakeGeneration() != lastBakeGen)
         rebuildThumbnail();
 
-    updateKnobStates();   // dim Bass Mono while Mid/Side is off (its only no-op state)
+    updateKnobStates();   // dim the X-Over crossover while Bass Mono is off (its only no-op state)
 
     // the EQ overlay tracks tone + pre-IR HP/LP + bass-mono, which are not bake params,
     // so poll them and repaint the wave layer only when one actually moves

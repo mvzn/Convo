@@ -18,8 +18,6 @@ struct IRBakeParams
     bool  reverse = false;     // reverse the IR before windowing
     bool  autoLevel = true;    // scale the kernel to unity energy (max-channel L2 = 1);
                                // false = "Raw": the IR's recorded level, unscaled
-    bool  msMode = false;      // encode the kernel to mid/side (mid=ch0, side=ch1) so the
-                               // audio thread can convolve mid-with-mid, side-with-side
     bool  filterIR = false;    // bake the pre-IR HP/LP into the kernel instead of filtering
                                // the input at runtime (cutoffs below; only used when true)
     float inHPHz = 20.0f;      // first-order high-pass cutoff baked into the kernel
@@ -38,7 +36,6 @@ struct IRBakeParams
             && juce::approximatelyEqual (taperMs, o.taperMs)
             && reverse == o.reverse
             && autoLevel == o.autoLevel
-            && msMode == o.msMode
             && filterIR == o.filterIR
             // cutoffs only affect the bake when the filter targets the IR, so changing
             // them in input-filter mode must not trigger a needless re-bake

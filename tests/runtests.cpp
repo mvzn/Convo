@@ -641,63 +641,75 @@ void test_midside_roundtrip()
 }
 
 // =========================================================================
-// bake() — mid/side kernel encoding  (archetype: property)
+// Bass Mono stage (archetype: property). The audio thread runs, post-convolution:
+// encode M/S, high-pass the side at the crossover, decode. So the mid is never
+// touched, content below the crossover folds to mono, and content above stays
+// stereo (identical to the feature being off). Uses the same building blocks.
 // =========================================================================
-void test_bake_ms_kernel()
+void test_bass_mono()
 {
-    std::printf ("\n== bake: mid/side kernel ==\n");
-    auto bp = plainBake(); bp.msMode = true;
+    std::printf ("\n== Bass Mono (post-conv side high-pass) ==\n");
+    constexpr int    n  = 4096;
+    constexpr double sr = 48000.0;
+    constexpr float  fc = 200.0f;
 
-    // stereo IR (L delta 1.0, R delta 0.5) -> kernel ch0 = mid 0.75, ch1 = side 0.25
-    juce::AudioBuffer<float> ir (2, 16); ir.clear();
-    ir.setSample (0, 0, 1.0f); ir.setSample (1, 0, 0.5f);
-    auto k = ConvolutionEngine::bake (ir, kFs, bp);
-    expectTrue (k.getNumChannels() == 2, "M/S kernel is stereo");
-    expectNear (k.getSample (0, 0), 0.75, 1e-6, "kernel mid  = (L+R)/2");
-    expectNear (k.getSample (1, 0), 0.25, 1e-6, "kernel side = (L-R)/2");
-
-    // mono IR has no side -> expands to [mid = mono, side = 0] (collapses to mono)
-    juce::AudioBuffer<float> mono (1, 16); mono.clear(); mono.setSample (0, 0, 1.0f);
-    auto km = ConvolutionEngine::bake (mono, kFs, bp);
-    expectTrue (km.getNumChannels() == 2, "mono IR expands to stereo for M/S");
-    expectNear (km.getSample (0, 0), 1.0, 1e-6, "mono M/S: mid = the mono IR");
-    expectNear (km.getMagnitude (1, 0, km.getNumSamples()), 0.0, 1e-9, "mono M/S: side kernel = 0");
-}
-
-// =========================================================================
-// processBlock routing: M/S convolution end-to-end via the live engine
-// (archetype: integration). Uses the same convo::msEncode/Decode the audio
-// thread runs, a delta IR so the result is closed-form.
-// =========================================================================
-void test_ms_routing_endtoend()
-{
-    std::printf ("\n== M/S routing (engine end-to-end) ==\n");
-    ConvolutionEngine eng;
-    constexpr int blockLen = 256;
-    eng.prepare ({ kFs, (juce::uint32) blockLen, 2 });
-
-    auto bp = plainBake(); bp.msMode = true;
-    juce::AudioBuffer<float> ir (2, 32); ir.clear();
-    ir.setSample (0, 0, 1.0f); ir.setSample (1, 0, 0.5f);    // M/S kernel: mid 0.75, side 0.25
-    juce::AudioBuffer<float> baked; eng.loadIR (ir, kFs, bp, baked);
-
-    juce::AudioBuffer<float> buf (2, blockLen);
-    int guard = 0;
-    while (! eng.hasIR() && guard++ < 4000)
-    { buf.clear(); juce::dsp::AudioBlock<float> b (buf); eng.process (b); juce::Thread::sleep (1); }
-    expectTrue (eng.hasIR(), "M/S kernel went live");
-
-    // input L=0.4, R=0.1 -> M=0.25, S=0.15; conv (mid 0.75, side 0.25) -> M_out 0.1875, S_out 0.0375
-    // decode -> L = 0.225, R = 0.15. Drive a few blocks so the (delta) convolution settles.
-    for (int b = 0; b < 8; ++b)
+    auto runStage = [&] (juce::AudioBuffer<float>& buf)
     {
-        for (int i = 0; i < blockLen; ++i) { buf.setSample (0, i, 0.4f); buf.setSample (1, i, 0.1f); }
-        convo::msEncode (buf.getWritePointer (0), buf.getWritePointer (1), blockLen);   // as processBlock does
-        juce::dsp::AudioBlock<float> blk (buf); eng.process (blk);
-        convo::msDecode (buf.getWritePointer (0), buf.getWritePointer (1), blockLen);
+        const int len = buf.getNumSamples();
+        juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
+                                       juce::dsp::IIR::Coefficients<float>> hp;
+        hp.prepare ({ sr, (juce::uint32) len, 1 });
+        *hp.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (sr, fc);
+        hp.reset();
+        convo::msEncode (buf.getWritePointer (0), buf.getWritePointer (1), len);
+        juce::dsp::AudioBlock<float> blk (buf);
+        auto sideBlk = blk.getSingleChannelBlock (1);                  // high-pass the side only
+        juce::dsp::ProcessContextReplacing<float> ctx (sideBlk);
+        hp.process (ctx);
+        convo::msDecode (buf.getWritePointer (0), buf.getWritePointer (1), len);
+    };
+
+    // A) content below the crossover (DC) folds to mono
+    {
+        juce::AudioBuffer<float> buf (2, n);
+        for (int i = 0; i < n; ++i) { buf.setSample (0, i, 0.6f); buf.setSample (1, i, 0.2f); }
+        runStage (buf);
+        expectNear (buf.getSample (0, n - 1), 0.4, 2e-3, "below crossover: L folds to the mid");
+        expectNear (buf.getSample (1, n - 1), 0.4, 2e-3, "below crossover: R folds to the mid");
+        expectNear (buf.getSample (0, n - 1) - buf.getSample (1, n - 1), 0.0, 2e-3,
+                    "below crossover: L == R (mono)");
     }
-    expectNear (buf.getSample (0, blockLen - 1), 0.225, 2e-3, "routed L = mid*0.75 + side*0.25");
-    expectNear (buf.getSample (1, blockLen - 1), 0.15,  2e-3, "routed R = mid*0.75 - side*0.25");
+
+    // B) content above the crossover stays stereo, and the mid is never touched
+    {
+        juce::AudioBuffer<float> buf (2, n), in (2, n);
+        const double w = 2.0 * juce::MathConstants<double>::pi * 6000.0 / sr;   // well above fc
+        for (int i = 0; i < n; ++i)
+        {
+            const float s = (float) std::sin (w * (double) i);                 // hard-left tone
+            buf.setSample (0, i, s); in.setSample (0, i, s);
+            buf.setSample (1, i, 0.0f); in.setSample (1, i, 0.0f);
+        }
+        runStage (buf);
+
+        bool midOk = true;                                  // mid = (L+R)/2 is bit-preserved
+        for (int i = 0; i < n; ++i)
+        {
+            const float midIn  = 0.5f * (in.getSample  (0, i) + in.getSample  (1, i));
+            const float midOut = 0.5f * (buf.getSample (0, i) + buf.getSample (1, i));
+            midOk = midOk && std::abs (midIn - midOut) < 1e-5f;
+        }
+        expectTrue (midOk, "above crossover: the mid is untouched");
+
+        double sIn = 0.0, sOut = 0.0;                       // side energy over the settled back half
+        for (int i = n / 2; i < n; ++i)
+        {
+            const float a = 0.5f * (in.getSample  (0, i) - in.getSample  (1, i));
+            const float b = 0.5f * (buf.getSample (0, i) - buf.getSample (1, i));
+            sIn += a * a; sOut += b * b;
+        }
+        expectTrue (sOut > 0.9 * sIn, "above crossover: the side passes (stays stereo)");
+    }
 }
 
 // =========================================================================
@@ -716,36 +728,6 @@ void test_bake_filter_ir()
     auto kOn = ConvolutionEngine::bake (raw, kFs, bpOn);
     expectTrue (kOn.getSample (0, 0) > 0.5f, "Filter-IR on: HP passes the step onset (edge)");
     expectTrue (std::abs (kOn.getSample (0, 1500)) < 0.05f, "Filter-IR on: 1 kHz HP removes the kernel's DC");
-}
-
-// =========================================================================
-// Bass-mono: a side high-pass collapses low frequencies to mono  (archetype: property)
-// =========================================================================
-void test_bass_mono()
-{
-    std::printf ("\n== bass-mono (side high-pass) ==\n");
-    constexpr int n = 9600;                           // 0.2 s
-    juce::AudioBuffer<float> buf (2, n);
-    const double w = juce::MathConstants<double>::twoPi * 50.0 / kFs;   // 50 Hz, pure side
-    for (int i = 0; i < n; ++i) { const float x = (float) std::sin (w * i);
-                                  buf.setSample (0, i, x); buf.setSample (1, i, -x); }
-
-    convo::msEncode (buf.getWritePointer (0), buf.getWritePointer (1), n);   // M = 0, S = x
-    const double sideBefore = channelL2 (buf, 1);
-
-    juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
-                                   juce::dsp::IIR::Coefficients<float>> hp;
-    hp.prepare ({ kFs, (juce::uint32) n, 1 });
-    *hp.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (kFs, 500.0f);
-    hp.reset();
-    juce::dsp::AudioBlock<float> blk (buf);
-    auto side = blk.getSingleChannelBlock (1);
-    juce::dsp::ProcessContextReplacing<float> ctx (side);
-    hp.process (ctx);
-
-    const double sideAfter = channelL2 (buf, 1);
-    expectTrue (sideAfter < 0.5 * sideBefore, "a 500 Hz side high-pass attenuates a 50 Hz side tone (-> mono)");
-    std::printf ("        (side L2 %.3f -> %.3f)\n", sideBefore, sideAfter);
 }
 
 // =========================================================================
@@ -803,10 +785,8 @@ int main()
     test_tilt_response();
     test_ms_width();
     test_midside_roundtrip();
-    test_bake_ms_kernel();
-    test_ms_routing_endtoend();
-    test_bake_filter_ir();
     test_bass_mono();
+    test_bake_filter_ir();
     test_issupported();
     test_irlibrary_cap();
     test_conv_nan_smoke();

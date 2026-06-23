@@ -3,9 +3,9 @@
 namespace convo
 {
     /** In-place mid/side encode of one stereo frame block: mid = (L+R)/2 into the
-        first pointer, side = (L-R)/2 into the second. Shared by the IR bake (kernel
-        encode) and the audio thread (input encode) so the two can never drift, and
-        exercised directly by the headless tests. Pure function. */
+        first pointer, side = (L-R)/2 into the second. Used by the audio-thread Bass Mono
+        stage (encode, high-pass the side, decode) and exercised directly by the headless
+        tests. Pure function. */
     inline void msEncode (float* L, float* R, int n) noexcept
     {
         for (int i = 0; i < n; ++i)

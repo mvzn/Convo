@@ -91,8 +91,8 @@ private:
     std::atomic<float>* inHPParam     = nullptr;   // pre-IR high-pass (low cut)
     std::atomic<float>* inLPParam     = nullptr;   // pre-IR low-pass  (high cut)
     std::atomic<float>* filterIRParam = nullptr;   // pre-IR filter target: input (off) or IR (on)
-    std::atomic<float>* msParam       = nullptr;   // mid/side convolution mode
-    std::atomic<float>* msBassParam   = nullptr;   // bass-mono crossover (side high-pass) in M/S mode
+    std::atomic<float>* msParam       = nullptr;   // bass-mono enable ("ms" id kept for compatibility)
+    std::atomic<float>* msBassParam   = nullptr;   // bass-mono crossover (side high-pass), Hz
     std::atomic<float>* preDelayParam = nullptr;
     std::atomic<float>* widthParam    = nullptr;
     std::atomic<float>* duckParam     = nullptr;
@@ -115,7 +115,7 @@ private:
                                                       juce::dsp::IIR::Coefficients<float>>;
     Duplicator lowShelf, highShelf;                  // tilt tone
     Duplicator inputHP, inputLP;                     // pre-IR input filter (first-order, 6 dB/oct)
-    Duplicator sideHP;                               // bass-mono: high-passes the side in M/S mode
+    Duplicator sideHP;                               // bass-mono: high-passes the wet's side post-convolution
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> preDelayLine { 1 };
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>   dryDelayLine  { 1 };
 
@@ -134,7 +134,6 @@ private:
     int    currentDryDelay = -1;
     float  duckEnv = 0.0f;
     float  wetCompTarget = 1.0f;   // wet-comp ratio held across blocks (frozen while input is quiet)
-    bool   prevMsEncode  = false;  // audio-thread edge detect: reset the side filter on M/S engage
     bool   prevFilterInput = true; // audio-thread edge detect: reset input filters when re-engaged
     // neutral-stage skip edge detect: reset the filter/delay on re-engage so the resumed block
     // starts clean (each stage is skipped while its control sits at a no-op value)
@@ -148,7 +147,6 @@ private:
     std::atomic<float> outputLevel { 0.0f };
     std::atomic<float> irLevel     { 0.0f };   // convolved (wet) signal x IR Gain, for the IR meter
     std::atomic<float> tailSeconds { 0.0f };         // baked IR length + max pre-delay
-    std::atomic<bool>  msActive    { false };        // audio thread M/S-encodes iff the live kernel is M/S
     std::atomic<bool>  filterInput { true };         // runtime input filter on iff the kernel is unfiltered
 
     // setStateInformation may run off the message thread (Cubase project load);

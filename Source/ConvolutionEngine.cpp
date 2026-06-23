@@ -223,24 +223,6 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
         lp.process (ctx);
     }
 
-    // 7. mid/side encode the kernel: ch0 = mid = (L+R)/2, ch1 = side = (L-R)/2.
-    //    The audio thread M/S-encodes its input the same way, so channel-wise
-    //    convolution becomes mid-with-mid and side-with-side. A mono IR has no
-    //    sides (side kernel = 0), so M/S mode narrows it to mono — it wants a
-    //    stereo IR to be meaningful.
-    if (bp.msMode)
-    {
-        if (out.getNumChannels() == 1)
-        {
-            juce::AudioBuffer<float> stereo (2, out.getNumSamples());
-            stereo.copyFrom (0, 0, out, 0, 0, out.getNumSamples());
-            stereo.copyFrom (1, 0, out, 0, 0, out.getNumSamples());
-            out = std::move (stereo);
-        }
-
-        convo::msEncode (out.getWritePointer (0), out.getWritePointer (1), out.getNumSamples());
-    }
-
     return out;
 }
 

@@ -59,7 +59,7 @@ private:
     void renderOverlay();              // (re)build the cached EQ curve + bass-mono marker on param/size change
     void drawFilterOverlay (juce::Graphics&);   // stroke the cached overlay over the wave (no recompute)
     void drawTrimHandles (juce::Graphics&);     // dim trimmed regions + draw the Start/End handles
-    void updateKnobStates();           // mode hints: dim Bass Mono (M/S off), relabel In->IR (Filter IR on)
+    void updateKnobStates();           // mode hints: dim X-Over (Bass Mono off), relabel In->IR (Filter IR on)
     float uiScale() const;             // physical px per logical px, for crisp caches
 
     // IR trim handle geometry / hit-testing (all in editor-local coords)
@@ -104,7 +104,7 @@ private:
                  duckLabel, duckRelLabel, fadeInLabel, decayLabel, taperLabel, stretchLabel;
     juce::ToggleButton reverseButton { "Reverse" }, rawLevelButton { "Raw IR" }, filterIRButton { "Filter IR" },
                        clipGuardButton { "Clip Guard" }, wetCompButton { "Wet Comp" },
-                       msButton { "Mid/Side" }, bypassButton { "Bypass" };
+                       msButton { "Bass Mono" }, bypassButton { "Bypass" };
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
@@ -120,7 +120,7 @@ private:
     float inShown = -1.0f, outShown = -1.0f, inPeakShown = -1.0f, outPeakShown = -1.0f;
     float irShown = -1.0f, irPeakShown = -1.0f;
 
-    // last-seen values of the overlay params (tone / In HP / In LP / Bass Mono / M/S) so the
+    // last-seen values of the overlay params (tone / In HP / In LP / X-Over / Bass Mono) so the
     // timer can repaint the wave layer when they move — they are not bake params
     float eqToneSeen = -1.0e9f, eqHpSeen = -1.0e9f, eqLpSeen = -1.0e9f, eqBassSeen = -1.0e9f;
     bool  eqMsSeen = false;

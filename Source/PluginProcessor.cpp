@@ -148,7 +148,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     // off = auto-level (kernel scaled to unity energy); on = the IR's raw recorded
     // level, which can convolve 30..45 dB hot on dense full-scale material
     layout.add (std::make_unique<AudioParameterBool> (
-        ParameterID { "irRaw", 1 }, "Raw IR Level", false));
+        ParameterID { "irRaw", 1 }, "Raw IR Level", true));
 
     // final-output soft-clip ceiling; transparent until the signal runs hot
     layout.add (std::make_unique<AudioParameterBool> (
@@ -159,15 +159,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "wetComp", 1 }, "Wet Comp", true));
 
-    // mid/side convolution: bake the kernel to M/S and convolve mid-with-mid,
-    // side-with-side (re-bakes the IR; masked by the load fade)
+    // bass mono: collapse the wet below the crossover to mono, keep the rest stereo
+    // (a pure audio-thread stage — high-passes the side post-convolution, no re-bake).
+    // Param ID stays "ms" for session compatibility with earlier builds.
     layout.add (std::make_unique<AudioParameterBool> (
-        ParameterID { "ms", 1 }, "Mid/Side", false));
+        ParameterID { "ms", 1 }, "Bass Mono", false));
 
-    // bass-mono crossover (M/S mode only): high-pass the side so content below the
-    // cutoff collapses to mono. 20 Hz = flat (off).
+    // bass-mono crossover (Bass Mono only): the side is high-passed at this frequency, so
+    // content below it folds to the centre. 20 Hz = flat (off). ID stays "msBass".
     layout.add (std::make_unique<AudioParameterFloat> (
-        ParameterID { "msBass", 1 }, "Bass Mono",
+        ParameterID { "msBass", 1 }, "Bass Mono Freq",
         NormalisableRange<float> (20.0f, 500.0f, 1.0f, 0.35f), 20.0f, "Hz"));
 
     layout.add (std::make_unique<AudioParameterBool> (
@@ -274,7 +275,6 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     duckEnv         = 0.0f;
     wetCompTarget   = 1.0f;
-    prevMsEncode    = false;
     prevFilterInput = true;
     prevToneActive  = prevInHpActive = prevInLpActive = prevBassActive
                     = prevPreDelayActive = true;
@@ -404,42 +404,31 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         inLPSm.skip (numSamples);
     }
 
-    // mid/side mode: encode the wet source to M = (L+R)/2, S = (L-R)/2 so channel-wise
-    // convolution with the M/S-baked kernel becomes mid-with-mid, side-with-side.
-    // msActive is published by the message thread only once the M/S kernel is loaded.
-    const bool msEncode = msActive.load() && numCh >= 2;
-    if (msEncode != prevMsEncode)
-    {
-        if (msEncode) sideHP.reset();   // clean engage; the M/S toggle is masked by the load fade
-        prevMsEncode = msEncode;
-    }
-    if (msEncode)
-    {
-        convo::msEncode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
+    convolution.process (wetBlock);
 
-        // bass-mono crossover: high-pass the side so content below the cutoff collapses to
-        // mono (the lows stay in the mid). 20 Hz = flat -> skip the side filter entirely.
+    // bass mono: collapse the wet below the crossover to mono, leave the rest stereo.
+    // Encode M/S, high-pass the side at the crossover, decode — above the crossover the M/S
+    // round-trip is sample-exact, so that band is identical to the bass-mono-off path; below
+    // it the side rolls off (6 dB/oct) so the lows fold to the centre. A mono IR still yields
+    // a stereo wet from stereo input (per-channel convolution), so the upper band is handled
+    // exactly as it is with the feature off. 20 Hz crossover / feature off => skipped (a
+    // bit-exact passthrough); the side filter resets on re-engage so the toggle stays clean.
+    {
+        const bool bassMonoOn = msParam->load() > 0.5f && numCh >= 2;
         msBassSm.setTargetValue (msBassParam->load());
         const float bassFc = msBassSm.skip (numSamples);
-        const bool bassActive = msBassSm.isSmoothing() || bassFc > 21.0f;
+        const bool bassActive = bassMonoOn && (msBassSm.isSmoothing() || bassFc > 21.0f);
         if (bassActive != prevBassActive) { if (bassActive) sideHP.reset(); prevBassActive = bassActive; }
         if (bassActive)
         {
+            convo::msEncode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
             *sideHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (currentSampleRate, bassFc);
             auto sideBlock = wetBlock.getSingleChannelBlock (1);
             juce::dsp::ProcessContextReplacing<float> sctx (sideBlock);
             sideHP.process (sctx);
+            convo::msDecode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
         }
     }
-    else
-    {
-        msBassSm.skip (numSamples);
-    }
-
-    convolution.process (wetBlock);
-
-    if (msEncode)   // decode mid/side back to L/R
-        convo::msDecode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
 
     // tone (tilt): rebuild shelf coefficients once per block from the smoothed value.
     // ArrayCoefficients + Coefficients::operator= reuse the existing array storage,
@@ -641,7 +630,6 @@ IRBakeParams ConvoAudioProcessor::currentBakeParams() const
     p.stretch      = stretchParam->load() * 0.01f;   // % -> factor
     p.reverse      = reverseParam->load() > 0.5f;
     p.autoLevel    = rawLevelParam->load() < 0.5f;
-    p.msMode       = msParam->load() > 0.5f;
     p.filterIR     = filterIRParam->load() > 0.5f;
     p.inHPHz       = inHPParam->load();
     p.inLPHz       = inLPParam->load();
@@ -671,14 +659,14 @@ void ConvoAudioProcessor::timerCallback()
     const auto cur = currentBakeParams();
     if (cur != lastBaked && cur == lastSeenBakeParams)
     {
-        const bool msChanged     = (cur.msMode   != lastBaked.msMode);
         const bool targetChanged = (cur.filterIR != lastBaked.filterIR);
-        // M/S and the filter-target change audio-thread routing; Reverse and Raw IR change the
-        // kernel abruptly (reversal / a big level jump). All four are discrete toggles, so arm
+        // The filter-target change flips audio-thread routing; Reverse and Raw IR change the
+        // kernel abruptly (reversal / a big level jump). All three are discrete toggles, so arm
         // the output fade to mask the swap and keep the toggle click-free. The continuous knobs
         // (fade-in/decay/taper) are dragged, so they keep relying on JUCE's seamless kernel
-        // crossfade — arming the fade on every drag tick would pump the output.
-        const bool toggleChanged = msChanged || targetChanged
+        // crossfade — arming the fade on every drag tick would pump the output. (Bass Mono is a
+        // pure audio-thread stage, not a bake param, so it never re-bakes or arms the fade.)
+        const bool toggleChanged = targetChanged
                                  || (cur.reverse   != lastBaked.reverse)
                                  || (cur.autoLevel != lastBaked.autoLevel);
 
@@ -699,7 +687,6 @@ void ConvoAudioProcessor::timerCallback()
             bakedIR = ConvolutionEngine::bake (irLibrary.getIR(), irLibrary.getSampleRate(), curDisp);
         bakeGeneration.fetch_add (1);   // every commit -> editor rebuilds the kernel layer (incl. trim-release)
 
-        if (msChanged)     msActive.store (cur.msMode);
         if (targetChanged) filterInput.store (! cur.filterIR);
         if (toggleChanged) loadFadePending.store (true);
     }
@@ -717,8 +704,7 @@ bool ConvoAudioProcessor::loadIRFile (const juce::File& file)
     bakedIRSampleRate  = irLibrary.getSampleRate();
     lastBaked          = cur;
     lastSeenBakeParams = cur;
-    msActive.store (cur.msMode);          // kernel is baked to match the current M/S mode
-    filterInput.store (! cur.filterIR);   // and to the current pre-IR filter target
+    filterInput.store (! cur.filterIR);   // kernel is baked to the current pre-IR filter target
     tailSeconds.store ((float) (audioBakeScratch.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
 
     // display IR is the FULL (untrimmed) picture; trim shows as a selection overlay in the editor
