@@ -217,14 +217,11 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     inputHP.reset();
     inputLP.reset();
 
-    // bass-mono side high-pass: two cascaded 2nd-order Butterworth (Q = 1/sqrt2) = 24 dB/oct
-    // Linkwitz-Riley, steep enough that the band below the crossover is genuinely mono
-    sideHP1.prepare (spec);
-    sideHP2.prepare (spec);
-    *sideHP1.state = *sideHP2.state =
-        juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (sampleRate, msBassParam->load(), 0.70710678f);
-    sideHP1.reset();
-    sideHP2.reset();
+    // bass-mono side high-pass: first-order (6 dB/oct) — the cleanest phase (least rotation,
+    // exactly complementary). The mid is never filtered, so center content stays phase-flat.
+    sideHP.prepare (spec);
+    *sideHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (sampleRate, msBassParam->load());
+    sideHP.reset();
 
     maxPreDelaySamples = (int) std::ceil (0.5 * sampleRate) + 1;
     preDelayLine.setMaximumDelayInSamples (maxPreDelaySamples);
@@ -295,8 +292,7 @@ void ConvoAudioProcessor::releaseResources()
     highShelf.reset();
     inputHP.reset();
     inputLP.reset();
-    sideHP1.reset();
-    sideHP2.reset();
+    sideHP.reset();
     preDelayLine.reset();
     dryDelayLine.reset();
 }
@@ -413,27 +409,25 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     convolution.process (wetBlock);
 
     // bass mono: collapse the wet below the crossover to mono, leave the rest stereo.
-    // Encode M/S, high-pass the side at the crossover (24 dB/oct, so the band below it is
-    // genuinely mono), decode — above the crossover the M/S round-trip is sample-exact, so
-    // that band is identical to the bass-mono-off path. Only acts on a stereo IR: a mono
+    // Encode M/S, high-pass the side at the crossover (first-order, 6 dB/oct — the gentlest,
+    // cleanest-phase split), decode — above the crossover the M/S round-trip is sample-exact,
+    // so that band is identical to the bass-mono-off path. Only acts on a stereo IR: a mono
     // kernel is processed exactly like the feature off (the mono IR convolves both input
     // channels). 20 Hz crossover / feature off / mono IR => skipped (a bit-exact passthrough);
-    // both filter sections reset on re-engage so the toggle stays clean.
+    // the side filter resets on re-engage so the toggle stays clean.
     {
         const bool bassMonoOn = msParam->load() > 0.5f && numCh >= 2 && kernelStereo.load();
         msBassSm.setTargetValue (msBassParam->load());
         const float bassFc = msBassSm.skip (numSamples);
         const bool bassActive = bassMonoOn && (msBassSm.isSmoothing() || bassFc > 21.0f);
-        if (bassActive != prevBassActive) { if (bassActive) { sideHP1.reset(); sideHP2.reset(); } prevBassActive = bassActive; }
+        if (bassActive != prevBassActive) { if (bassActive) sideHP.reset(); prevBassActive = bassActive; }
         if (bassActive)
         {
             convo::msEncode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
-            *sideHP1.state = *sideHP2.state =
-                juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (currentSampleRate, bassFc, 0.70710678f);
+            *sideHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (currentSampleRate, bassFc);
             auto sideBlock = wetBlock.getSingleChannelBlock (1);
             juce::dsp::ProcessContextReplacing<float> sctx (sideBlock);
-            sideHP1.process (sctx);
-            sideHP2.process (sctx);
+            sideHP.process (sctx);
             convo::msDecode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
         }
     }

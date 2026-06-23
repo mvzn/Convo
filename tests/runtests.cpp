@@ -656,20 +656,17 @@ void test_bass_mono()
     auto runStage = [&] (juce::AudioBuffer<float>& buf)
     {
         const int len = buf.getNumSamples();
-        // two cascaded 2nd-order Butterworth = 24 dB/oct (LR4), matching the processor's side HP
+        // first-order (6 dB/oct) high-pass on the side, matching the processor's cleanest-phase split
         juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
-                                       juce::dsp::IIR::Coefficients<float>> hp1, hp2;
-        hp1.prepare ({ sr, (juce::uint32) len, 1 });
-        hp2.prepare ({ sr, (juce::uint32) len, 1 });
-        *hp1.state = *hp2.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (sr, fc, 0.70710678f);
-        hp1.reset();
-        hp2.reset();
+                                       juce::dsp::IIR::Coefficients<float>> hp;
+        hp.prepare ({ sr, (juce::uint32) len, 1 });
+        *hp.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (sr, fc);
+        hp.reset();
         convo::msEncode (buf.getWritePointer (0), buf.getWritePointer (1), len);
         juce::dsp::AudioBlock<float> blk (buf);
         auto sideBlk = blk.getSingleChannelBlock (1);                  // high-pass the side only
         juce::dsp::ProcessContextReplacing<float> ctx (sideBlk);
-        hp1.process (ctx);
-        hp2.process (ctx);
+        hp.process (ctx);
         convo::msDecode (buf.getWritePointer (0), buf.getWritePointer (1), len);
     };
 
@@ -715,14 +712,14 @@ void test_bass_mono()
         expectTrue (sOut > 0.9 * sIn, "above crossover: the side passes (stays stereo)");
     }
 
-    // C) a tone an octave below the crossover is convincingly mono — the steep (24 dB/oct)
-    //    side high-pass strips most of the side there (a 6 dB/oct filter would leave ~50%).
+    // C) well below the crossover the side is stripped toward mono. With the gentle (6 dB/oct)
+    //    cleanest-phase filter, two octaves down (-12 dB) leaves < 10% of the side energy.
     {
         juce::AudioBuffer<float> buf (2, n), in (2, n);
-        const double w = 2.0 * juce::MathConstants<double>::pi * (fc * 0.5) / sr;   // 100 Hz, fc = 200
+        const double w = 2.0 * juce::MathConstants<double>::pi * (fc * 0.25) / sr;   // 50 Hz, fc = 200
         for (int i = 0; i < n; ++i)
         {
-            const float s = (float) std::sin (w * (double) i);                      // hard-left
+            const float s = (float) std::sin (w * (double) i);                       // hard-left
             buf.setSample (0, i, s); in.setSample (0, i, s);
             buf.setSample (1, i, 0.0f); in.setSample (1, i, 0.0f);
         }
@@ -734,7 +731,7 @@ void test_bass_mono()
             const float b = 0.5f * (buf.getSample (0, i) - buf.getSample (1, i));
             sIn += a * a; sOut += b * b;
         }
-        expectTrue (sOut < 0.1 * sIn, "below crossover (octave): the side is stripped (actual mono)");
+        expectTrue (sOut < 0.1 * sIn, "well below crossover: the side is stripped toward mono");
     }
 
     // D) a mono IR bakes to a mono kernel, so the processor gates Bass Mono off and the IR

@@ -116,8 +116,9 @@ private:
                                                       juce::dsp::IIR::Coefficients<float>>;
     Duplicator lowShelf, highShelf;                  // tilt tone
     Duplicator inputHP, inputLP;                     // pre-IR input filter (first-order, 6 dB/oct)
-    Duplicator sideHP1, sideHP2;                     // bass-mono: 24 dB/oct (LR4) side high-pass post-convolution,
-                                                     // steep so the sub-crossover band is genuinely mono
+    Duplicator sideHP;                               // bass-mono: first-order (6 dB/oct) side high-pass
+                                                     // post-convolution — gentlest, cleanest phase (the mid
+                                                     // stays unfiltered, so center content is phase-flat)
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> preDelayLine { 1 };
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>   dryDelayLine  { 1 };
 
