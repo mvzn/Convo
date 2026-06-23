@@ -125,6 +125,7 @@ private:
                                wetCompSm,            // adaptive wet gain compensation (dry-referenced)
                                inHPSm, inLPSm,       // pre-IR filter cutoffs (smoothed, per-block coeff rebuild)
                                msBassSm,             // bass-mono crossover cutoff (smoothed)
+                               preDelaySm,           // pre-delay length in samples (per-sample setDelay so modulation glides)
                                clipGuardSm;          // 0..1 blend so toggling the clip guard is click-free
 
     double currentSampleRate = 48000.0;

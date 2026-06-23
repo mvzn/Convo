@@ -251,6 +251,7 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     inHPSm.reset       (sampleRate, 0.05);
     inLPSm.reset       (sampleRate, 0.05);
     msBassSm.reset     (sampleRate, 0.05);
+    preDelaySm.reset   (sampleRate, 0.05);   // glide the delay length so modulation doesn't teleport the read pointer
     clipGuardSm.reset  (sampleRate, 0.01);
 
     dryGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (dryParam->load(),    -60.0f));
@@ -267,6 +268,8 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     inHPSm.setCurrentAndTargetValue       (inHPParam->load());
     inLPSm.setCurrentAndTargetValue       (inLPParam->load());
     msBassSm.setCurrentAndTargetValue     (msBassParam->load());
+    preDelaySm.setCurrentAndTargetValue   (juce::jlimit (0.0f, (float) (maxPreDelaySamples - 2),
+                                                         preDelayParam->load() * 0.001f * (float) sampleRate));
     clipGuardSm.setCurrentAndTargetValue  (clipGuardParam->load() > 0.5f ? 1.0f : 0.0f);
 
     duckEnv         = 0.0f;
@@ -496,19 +499,35 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         const float pdSamps = juce::jlimit (0.0f, (float) (maxPreDelaySamples - 2),
                                             preDelayParam->load() * 0.001f * (float) currentSampleRate);
         const bool pdActive = pdSamps > 0.5f;
-        if (pdActive != prevPreDelayActive) { if (pdActive) preDelayLine.reset(); prevPreDelayActive = pdActive; }
+        // on re-engage, clear the line and snap the smoother so the glide starts at
+        // the current setting (the load/empty line masks the jump, no click)
+        if (pdActive != prevPreDelayActive)
+        {
+            if (pdActive) { preDelayLine.reset(); preDelaySm.setCurrentAndTargetValue (pdSamps); }
+            prevPreDelayActive = pdActive;
+        }
+        preDelaySm.setTargetValue (pdSamps);
         if (pdActive)
         {
-            preDelayLine.setDelay (pdSamps);
+            float* w[2] = { nullptr, nullptr };
             for (int ch = 0; ch < numCh; ++ch)
+                w[ch] = wetWork.getWritePointer (ch);
+
+            // setDelay applies to all channels, so ramp once per sample (channels inner)
+            // — the read pointer glides instead of teleporting at the block boundary
+            for (int i = 0; i < numSamples; ++i)
             {
-                auto* w = wetWork.getWritePointer (ch);
-                for (int i = 0; i < numSamples; ++i)
+                preDelayLine.setDelay (preDelaySm.getNextValue());
+                for (int ch = 0; ch < numCh; ++ch)
                 {
-                    preDelayLine.pushSample (ch, w[i]);
-                    w[i] = preDelayLine.popSample (ch);
+                    preDelayLine.pushSample (ch, w[ch][i]);
+                    w[ch][i] = preDelayLine.popSample (ch);
                 }
             }
+        }
+        else
+        {
+            preDelaySm.skip (numSamples);
         }
     }
 
