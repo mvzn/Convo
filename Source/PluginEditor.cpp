@@ -527,7 +527,9 @@ void ConvoAudioProcessorEditor::renderOverlay()
         else        eqCurvePath.lineTo (x, y);
     }
 
-    if (apvts.getRawParameterValue ("ms")->load() > 0.5f)   // bass-mono crossover marker
+    // bass-mono crossover marker — only when the feature is on AND the kernel is stereo (a
+    // mono IR makes Bass Mono a no-op, so don't imply a crossover is acting)
+    if (apvts.getRawParameterValue ("ms")->load() > 0.5f && processor.getKernelIR().getNumChannels() > 1)
     {
         const float bass = apvts.getRawParameterValue ("msBass")->load();
         if (bass > 21.0f)

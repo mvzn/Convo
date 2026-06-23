@@ -409,12 +409,12 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     // bass mono: collapse the wet below the crossover to mono, leave the rest stereo.
     // Encode M/S, high-pass the side at the crossover, decode — above the crossover the M/S
     // round-trip is sample-exact, so that band is identical to the bass-mono-off path; below
-    // it the side rolls off (6 dB/oct) so the lows fold to the centre. A mono IR still yields
-    // a stereo wet from stereo input (per-channel convolution), so the upper band is handled
-    // exactly as it is with the feature off. 20 Hz crossover / feature off => skipped (a
-    // bit-exact passthrough); the side filter resets on re-engage so the toggle stays clean.
+    // it the side rolls off (6 dB/oct) so the lows fold to the centre. Only acts on a stereo
+    // IR: a mono kernel is processed exactly like the feature off (the mono IR convolves both
+    // input channels). 20 Hz crossover / feature off / mono IR => skipped (a bit-exact
+    // passthrough); the side filter resets on re-engage so the toggle stays clean.
     {
-        const bool bassMonoOn = msParam->load() > 0.5f && numCh >= 2;
+        const bool bassMonoOn = msParam->load() > 0.5f && numCh >= 2 && kernelStereo.load();
         msBassSm.setTargetValue (msBassParam->load());
         const float bassFc = msBassSm.skip (numSamples);
         const bool bassActive = bassMonoOn && (msBassSm.isSmoothing() || bassFc > 21.0f);
@@ -681,6 +681,7 @@ void ConvoAudioProcessor::timerCallback()
         convolution.rebake (irLibrary.getIR(), irLibrary.getSampleRate(), cur, audioBakeScratch);
         bakedIRSampleRate = irLibrary.getSampleRate();
         tailSeconds.store ((float) (audioBakeScratch.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
+        kernelStereo.store (audioBakeScratch.getNumChannels() > 1);
         lastBaked = cur;
 
         if (displayChanged)
@@ -705,6 +706,7 @@ bool ConvoAudioProcessor::loadIRFile (const juce::File& file)
     lastBaked          = cur;
     lastSeenBakeParams = cur;
     filterInput.store (! cur.filterIR);   // kernel is baked to the current pre-IR filter target
+    kernelStereo.store (audioBakeScratch.getNumChannels() > 1);   // Bass Mono only acts on a stereo IR
     tailSeconds.store ((float) (audioBakeScratch.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
 
     // display IR is the FULL (untrimmed) picture; trim shows as a selection overlay in the editor

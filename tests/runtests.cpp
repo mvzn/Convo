@@ -710,6 +710,14 @@ void test_bass_mono()
         }
         expectTrue (sOut > 0.9 * sIn, "above crossover: the side passes (stays stereo)");
     }
+
+    // C) a mono IR bakes to a mono kernel, so the processor gates Bass Mono off and the IR
+    //    is processed exactly like the feature off (the mono IR convolves both channels).
+    {
+        juce::AudioBuffer<float> mono (1, 64); mono.clear(); mono.setSample (0, 0, 1.0f);
+        auto km = ConvolutionEngine::bake (mono, kFs, plainBake());
+        expectTrue (km.getNumChannels() == 1, "mono IR -> mono kernel (Bass Mono is gated off)");
+    }
 }
 
 // =========================================================================

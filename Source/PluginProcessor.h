@@ -148,6 +148,8 @@ private:
     std::atomic<float> irLevel     { 0.0f };   // convolved (wet) signal x IR Gain, for the IR meter
     std::atomic<float> tailSeconds { 0.0f };         // baked IR length + max pre-delay
     std::atomic<bool>  filterInput { true };         // runtime input filter on iff the kernel is unfiltered
+    std::atomic<bool>  kernelStereo { false };       // live kernel has 2 channels (gates Bass Mono: a
+                                                     // mono IR is processed exactly like the feature off)
 
     // setStateInformation may run off the message thread (Cubase project load);
     // it only stashes the path here and the timer performs the actual load.
