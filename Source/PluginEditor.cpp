@@ -230,17 +230,15 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
         thumbnail->addChangeListener (this);
         thumbnail->reset (ir.getNumChannels(), sr, n);
         thumbnail->addBlock (0, ir, 0, n);
-        bakedLenSeconds = n / sr;
-        bakedLenText = juce::String (bakedLenSeconds, 2) + " s";
     }
     else
     {
         thumbnail->clear();
-        bakedLenSeconds = 0.0;
-        bakedLenText.clear();
     }
 
-    // kernel layer: the trimmed+shaped audio kernel, shown sharp inside the trim selection
+    // kernel layer: the trimmed+shaped audio kernel, shown sharp inside the trim selection.
+    // The length readout reads from this kernel (the actual convolved buffer), not the full
+    // backdrop, so it reflects the trim (and decay truncation) rather than the whole IR.
     {
         const auto&  kir = processor.getKernelIR();
         const double ksr = processor.getBakedIRSampleRate();
@@ -251,9 +249,15 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
                                                                       thumbnailFormatManager, kernelThumbnailCache);
             kernelThumbnail->reset (kir.getNumChannels(), ksr, kn);
             kernelThumbnail->addBlock (0, kir, 0, kn);
+            bakedLenSeconds = kn / ksr;
+            bakedLenText = juce::String (bakedLenSeconds, 2) + " s";
         }
-        else if (kernelThumbnail != nullptr)
-            kernelThumbnail->clear();
+        else
+        {
+            if (kernelThumbnail != nullptr) kernelThumbnail->clear();
+            bakedLenSeconds = 0.0;
+            bakedLenText.clear();
+        }
     }
 
     lastBakeGen = processor.getBakeGeneration();
