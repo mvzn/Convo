@@ -70,6 +70,43 @@ void test_bake_reverse()
 }
 
 // =========================================================================
+// bake() — trim, and trim under reverse  (archetype: pure identity)
+//   The Start/End handles select a region of the *displayed* waveform. With
+//   Reverse on the display shows the reversed IR, so the baked kernel must equal
+//   that same screen region of the reversed IR — not its raw-coordinate mirror.
+// =========================================================================
+void test_bake_trim_reverse()
+{
+    std::printf ("\n== bake: trim (+ reverse) ==\n");
+    juce::AudioBuffer<float> raw (1, 10);
+    for (int i = 0; i < 10; ++i) raw.setSample (0, i, (float) i);   // 0..9
+
+    // fractions chosen to land mid-sample (floor(0.25*10)=2, ceil(0.55*10)=6) so the
+    // float->double rounding in the trim is unambiguous: on-screen span = display [2,6).
+    // plain trim: keep [0.25, 0.55) of the forward IR -> samples {2,3,4,5}
+    {
+        auto bp = plainBake(); bp.startFrac = 0.25f; bp.endFrac = 0.55f;
+        auto out = ConvolutionEngine::bake (raw, kFs, bp);
+        bool ok = out.getNumSamples() == 4;
+        for (int i = 0; i < out.getNumSamples(); ++i)
+            ok = ok && juce::approximatelyEqual (out.getSample (0, i), (float) (2 + i));
+        expectTrue (ok, "forward trim keeps raw[2..5] (the [0.25,0.55) span)");
+    }
+
+    // reverse + same handles: the selection is on the reversed display, so the
+    // kernel must equal reverse(raw) sliced at the same screen span -> {7,6,5,4}
+    {
+        auto bp = plainBake(); bp.reverse = true; bp.startFrac = 0.25f; bp.endFrac = 0.55f;
+        auto out = ConvolutionEngine::bake (raw, kFs, bp);
+        const int n = 10, first = 2;   // display span [2,6) of reverse(raw) -> {7,6,5,4}
+        bool ok = out.getNumSamples() == 4;
+        for (int i = 0; i < out.getNumSamples(); ++i)
+            ok = ok && juce::approximatelyEqual (out.getSample (0, i), (float) ((n - 1) - (first + i)));
+        expectTrue (ok, "reverse+trim keeps the on-screen selection of the reversed display");
+    }
+}
+
+// =========================================================================
 // bake() — fade-in raised cosine  (archetype: time-domain analytic)
 // =========================================================================
 void test_bake_fadein()
@@ -749,6 +786,7 @@ int main()
     std::printf ("Convo headless tests\n====================\n");
 
     test_bake_reverse();
+    test_bake_trim_reverse();
     test_bake_fadein();
     test_bake_fadein_cap();
     test_bake_decay_envelope();

@@ -66,8 +66,14 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
     //    first so stretch + reverse/fade/decay/taper all operate on the kept region. Clamped to
     //    at least one sample so a fully collapsed range (start >= end) still yields a valid kernel.
     {
-        const float s = juce::jlimit (0.0f, 1.0f, bp.startFrac);
-        const float e = juce::jlimit (0.0f, 1.0f, bp.endFrac);
+        float s = juce::jlimit (0.0f, 1.0f, bp.startFrac);
+        float e = juce::jlimit (0.0f, 1.0f, bp.endFrac);
+        // The display backdrop shows the reversed IR when Reverse is on, and the Start/End
+        // handles select a region of that displayed (reversed) waveform. Trim runs *before*
+        // the reversal below, so mirror the selection into raw coordinates when reversing —
+        // otherwise the kept region is the mirror image of what the user selected on screen
+        // (and the shown kernel no longer lines up with the backdrop it's drawn over).
+        if (bp.reverse) { const float ms = 1.0f - e, me = 1.0f - s; s = ms; e = me; }
         int first = juce::jlimit (0, n - 1, (int) std::floor ((double) s * (double) n));
         int last  = juce::jlimit (0, n,     (int) std::ceil  ((double) e * (double) n));   // exclusive
         if (last <= first)
