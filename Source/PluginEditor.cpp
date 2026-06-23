@@ -529,7 +529,7 @@ void ConvoAudioProcessorEditor::renderOverlay()
 
     // bass-mono crossover marker — only when the feature is on AND the kernel is stereo (a
     // mono IR makes Bass Mono a no-op, so don't imply a crossover is acting)
-    if (apvts.getRawParameterValue ("ms")->load() > 0.5f && processor.getKernelIR().getNumChannels() > 1)
+    if (apvts.getRawParameterValue ("ms")->load() > 0.5f && processor.getKernelStereo())
     {
         const float bass = apvts.getRawParameterValue ("msBass")->load();
         if (bass > 21.0f)
@@ -758,8 +758,14 @@ void ConvoAudioProcessorEditor::updateKnobStates()
 {
     auto& a = processor.getAPVTS();
 
+    // Bass Mono needs a stereo IR. With a mono IR don't allow the mode at all: disable the
+    // toggle (reverts to the original processing) and dim its crossover knob.
+    const bool stereoIR = processor.getKernelStereo();
+    if (msButton.isEnabled() != stereoIR)
+        msButton.setEnabled (stereoIR);
+
     const bool msOn = a.getRawParameterValue ("ms")->load() > 0.5f;
-    const float t = msOn ? 1.0f : 0.45f;
+    const float t = (msOn && stereoIR) ? 1.0f : 0.45f;
     if (! juce::approximatelyEqual (msBassSlider.getAlpha(), t))
     {
         msBassSlider.setAlpha (t);

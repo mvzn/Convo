@@ -70,6 +70,7 @@ public:
     const juce::AudioBuffer<float>& getBakedIR() const noexcept { return bakedIR; }
     double getBakedIRSampleRate() const noexcept { return bakedIRSampleRate; }
     const juce::AudioBuffer<float>& getKernelIR() const noexcept { return audioBakeScratch; }  // trimmed+shaped kernel (the selection layer)
+    bool getKernelStereo() const noexcept { return kernelStereo.load(); }  // Bass Mono is offered only for a stereo IR
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static constexpr float kDecayOffMs = 10000.0f;   // top of the Decay range == "Off"
@@ -115,7 +116,8 @@ private:
                                                       juce::dsp::IIR::Coefficients<float>>;
     Duplicator lowShelf, highShelf;                  // tilt tone
     Duplicator inputHP, inputLP;                     // pre-IR input filter (first-order, 6 dB/oct)
-    Duplicator sideHP;                               // bass-mono: high-passes the wet's side post-convolution
+    Duplicator sideHP1, sideHP2;                     // bass-mono: 24 dB/oct (LR4) side high-pass post-convolution,
+                                                     // steep so the sub-crossover band is genuinely mono
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> preDelayLine { 1 };
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>   dryDelayLine  { 1 };
 
