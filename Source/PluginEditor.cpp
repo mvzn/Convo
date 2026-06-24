@@ -52,7 +52,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setup (inLPSlider,     inLPLabel,     "In LP");
     setup (preDelaySlider, preDelayLabel, "Pre-Delay");
     setup (widthSlider,    widthLabel,    "Width");
-    setup (msBassSlider,   msBassLabel,   "X-Over");
+    setup (msBassSlider,   msBassLabel,   "Bass Mono");
     setup (duckSlider,     duckLabel,     "Duck");
     setup (duckRelSlider,  duckRelLabel,  "Release");
     setup (fadeInSlider,   fadeInLabel,   "Fade In");
@@ -75,10 +75,10 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     inHPSlider.setTooltip ("Pre-IR high-pass (low cut), 6 dB/oct, on the signal feeding the IR");
     inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 6 dB/oct, on the signal feeding the IR");
     fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp is capped at 80% of the IR length");
-    msButton.setTooltip   ("Bass Mono: fold the wet below the X-Over frequency to mono, keeping "
-                           "everything above it stereo (unchanged from the feature being off)");
-    msBassSlider.setTooltip ("Bass Mono crossover: the wet collapses to mono below this "
-                             "frequency, stays stereo above (6 dB/oct). 20 Hz = off");
+    msButton.setTooltip   ("Bass Mono on/off (the LED on the knob): fold the wet below the crossover "
+                           "to mono, keeping everything above it stereo. Stereo IRs only");
+    msBassSlider.setTooltip ("Bass Mono crossover: the wet collapses to mono below this frequency "
+                             "and stays stereo above it (6 dB/oct, cleanest phase). 20 Hz = off");
     filterIRButton.setTooltip ("Apply the In HP/In LP filter to the IR (baked, shown in the "
                                "display) instead of the input. Same sound; IR mode is cheaper "
                                "at runtime but re-bakes when you move the cutoffs");
@@ -759,10 +759,15 @@ void ConvoAudioProcessorEditor::updateKnobStates()
     auto& a = processor.getAPVTS();
 
     // Bass Mono needs a stereo IR. With a mono IR don't allow the mode at all: disable the
-    // toggle (reverts to the original processing) and dim its crossover knob.
+    // embedded enable LED (reverts to the original processing) and dim it; the knob is dimmed
+    // whenever the mode is off or unavailable. The LED stays bright while merely off (stereo
+    // IR) so it reads as the "turn me on" affordance sitting on the knob.
     const bool stereoIR = processor.getKernelStereo();
     if (msButton.isEnabled() != stereoIR)
         msButton.setEnabled (stereoIR);
+    const float ledA = stereoIR ? 1.0f : 0.45f;
+    if (! juce::approximatelyEqual (msButton.getAlpha(), ledA))
+        msButton.setAlpha (ledA);
 
     const bool msOn = a.getRawParameterValue ("ms")->load() > 0.5f;
     const float t = (msOn && stereoIR) ? 1.0f : 0.45f;
@@ -944,6 +949,8 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (row.removeFromLeft (cellW), inHPSlider,   inHPLabel);
         placeKnob (row.removeFromLeft (cellW), inLPSlider,   inLPLabel);
         placeKnob (row.removeFromLeft (cellW), msBassSlider, msBassLabel);
+        // Bass Mono enable is embedded on the knob: a small square LED toggle on the cap
+        msButton.setBounds (juce::Rectangle<int> (16, 16).withCentre (msBassSlider.getBounds().getCentre()));
     }
     {   // POST — post-convolution shaping + final mix
         auto row = knobArea (postPanel);
@@ -978,7 +985,8 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (col (3), taperSlider,  taperLabel);     // under Dry
         placeKnob (col (4), stretchSlider, stretchLabel);  // under Wet
         // toggle column fills the Output column; LED right edge by the Output knob's right edge
-        const int btnH = 28, gap = 6, colH = btnH * 4 + gap * 3;
+        // (Bass Mono's enable is not here — it's embedded on the X-Over knob above)
+        const int btnH = 28, gap = 6, colH = btnH * 3 + gap * 2;
         const int togLeft  = postRow.getX() + 5 * cw;
         const int togRight = outputSlider.getBounds().getRight();
         auto toggles = juce::Rectangle<int> (togLeft, row.getCentreY() - colH / 2,
@@ -988,8 +996,6 @@ void ConvoAudioProcessorEditor::resized()
         rawLevelButton.setBounds (toggles.removeFromTop (btnH));
         toggles.removeFromTop (gap);
         filterIRButton.setBounds (toggles.removeFromTop (btnH));
-        toggles.removeFromTop (gap);
-        msButton.setBounds       (toggles.removeFromTop (btnH));
     }
 
     renderBackground();
