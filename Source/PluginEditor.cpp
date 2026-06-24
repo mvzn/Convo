@@ -964,11 +964,11 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (row.removeFromLeft (cellW), inHPSlider, inHPLabel);
         placeKnob (row.removeFromLeft (cellW), inLPSlider, inLPLabel);
     }
-    {   // POST (Bass Mono/Tone/Width/Pre-Delay) + VOLUME (Dry/Wet/Output) on the shared grid
-        placeKnob (pcol (0, postGrid), msBassSlider,   msBassLabel);   // Bass Mono first
+    {   // POST in signal-flow order (Pre-Delay/Tone/Bass Mono/Width) + VOLUME (Dry/Wet/Output)
+        placeKnob (pcol (0, postGrid), preDelaySlider, preDelayLabel);
         placeKnob (pcol (1, postGrid), toneSlider,     toneLabel);
-        placeKnob (pcol (2, postGrid), widthSlider,    widthLabel);
-        placeKnob (pcol (3, postGrid), preDelaySlider, preDelayLabel);
+        placeKnob (pcol (2, postGrid), msBassSlider,   msBassLabel);   // Bass Mono
+        placeKnob (pcol (3, postGrid), widthSlider,    widthLabel);
         placeKnob (pcol (4, postGrid), drySlider,      dryLabel);
         placeKnob (pcol (5, postGrid), wetSlider,      wetLabel);
         placeKnob (pcol (6, postGrid), outputSlider,   outputLabel);
@@ -984,10 +984,10 @@ void ConvoAudioProcessorEditor::resized()
     }
     {   // IR SHAPE — 5 knobs under the shared post grid, then the IR meter, then the toggles
         auto row = knobArea (shapePanel);
-        placeKnob (pcol (0, row), irGainSlider,  irGainLabel);    // under Bass Mono
+        placeKnob (pcol (0, row), irGainSlider,  irGainLabel);    // under Pre-Delay
         placeKnob (pcol (1, row), fadeInSlider,  fadeInLabel);    // under Tone
-        placeKnob (pcol (2, row), decaySlider,   decayLabel);     // under Width
-        placeKnob (pcol (3, row), taperSlider,   taperLabel);     // under Pre-Delay
+        placeKnob (pcol (2, row), decaySlider,   decayLabel);     // under Bass Mono
+        placeKnob (pcol (3, row), taperSlider,   taperLabel);     // under Width
         placeKnob (pcol (4, row), stretchSlider, stretchLabel);   // under Dry
         // IR meter: a slim recessed level meter between the last knob (Stretch) and the toggles
         // (16px of headroom at the top for the "IR" cap); shares the in/out meter gradient
