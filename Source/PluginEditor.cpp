@@ -894,7 +894,7 @@ void ConvoAudioProcessorEditor::resized()
     // FILTER is its own 2-knob group on the left (DUCKING below it shares its width).
     filterPanel = row1.removeFromLeft (juce::roundToInt ((row1.getWidth() - 10) * 2.0f / 9.0f));
     row1.removeFromLeft (10);
-    auto postArea = row1;                       // POST + VOLUME share this span (7 columns)
+    auto postArea = row1;                       // POST + VOLUME split this span (4 + 3 knobs)
     area.removeFromTop (10);
     auto row2 = area.removeFromTop (170);
     duckPanel = row2.removeFromLeft (filterPanel.getWidth());   // DUCKING sits under FILTER
@@ -914,17 +914,24 @@ void ConvoAudioProcessorEditor::resized()
         return r;
     };
 
-    // shared 7-column grid over the post-area, reused by POST/VOLUME and the IR SHAPE row so
-    // every column lines up vertically regardless of where the POST|VOLUME panels split
-    auto postGrid = knobArea (postArea);
-    const int cw = postGrid.getWidth() / 7;
-    auto pcol = [&] (int i, juce::Rectangle<int> rowArea)
-    { return juce::Rectangle<int> (postGrid.getX() + i * cw, rowArea.getY(), cw, rowArea.getHeight()); };
-
-    // POST = cols 0-3, VOLUME = cols 4-6; split the panel backgrounds at the col3/col4 boundary
-    const int splitOff = (postGrid.getX() - postArea.getX()) + 4 * cw;
-    postPanel   = postArea.withWidth (splitOff - 5);
-    volumePanel = postArea.withTrimmedLeft (splitOff + 5);
+    // POST (4 knobs) | VOLUME (3 knobs): split the post-area into two panels with a 10 px gap,
+    // each getting its OWN column grid (sized so POST's 4 cells and VOLUME's 3 cells are equal
+    // width). A single shared grid sliced down the middle crams the knobs either side of the
+    // split against their borders; per-panel grids give every first/last knob the same margin.
+    {
+        const int gap    = 10;
+        const int usable = postArea.getWidth() - gap;
+        const int volW   = juce::roundToInt ((3.0f * (float) usable + 20.0f) / 7.0f);   // -> cwP == cwV
+        postPanel   = postArea.withWidth (usable - volW);
+        volumePanel = postArea.withTrimmedLeft ((usable - volW) + gap);
+    }
+    auto postKA = knobArea (postPanel);     // 4-column grid
+    auto volKA  = knobArea (volumePanel);   // 3-column grid
+    const int cwP = postKA.getWidth() / 4;
+    const int cwV = volKA.getWidth()  / 3;
+    // place at a POST / VOLUME column, taking the given row's y so the IR SHAPE row lines up
+    auto pcolP = [&] (int i, juce::Rectangle<int> r) { return juce::Rectangle<int> (postKA.getX() + i * cwP, r.getY(), cwP, r.getHeight()); };
+    auto pcolV = [&] (int j, juce::Rectangle<int> r) { return juce::Rectangle<int> (volKA.getX()  + j * cwV, r.getY(), cwV, r.getHeight()); };
 
     {   // FILTER — pre-IR input filters
         auto row = knobArea (filterPanel);
@@ -932,17 +939,19 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (row.removeFromLeft (cellW), inHPSlider, inHPLabel);
         placeKnob (row.removeFromLeft (cellW), inLPSlider, inLPLabel);
     }
-    {   // POST in signal-flow order (Pre-Delay/Tone/Bass Mono/Width) + VOLUME (Dry/Wet/Output)
-        placeKnob (pcol (0, postGrid), preDelaySlider, preDelayLabel);
-        placeKnob (pcol (1, postGrid), toneSlider,     toneLabel);
-        placeKnob (pcol (2, postGrid), msBassSlider,   msBassLabel);   // Bass Mono
-        placeKnob (pcol (3, postGrid), widthSlider,    widthLabel);
-        placeKnob (pcol (4, postGrid), drySlider,      dryLabel);
-        placeKnob (pcol (5, postGrid), wetSlider,      wetLabel);
-        placeKnob (pcol (6, postGrid), outputSlider,   outputLabel);
+    {   // POST in signal-flow order (Pre-Delay/Tone/Bass Mono/Width)
+        placeKnob (pcolP (0, postKA), preDelaySlider, preDelayLabel);
+        placeKnob (pcolP (1, postKA), toneSlider,     toneLabel);
+        placeKnob (pcolP (2, postKA), msBassSlider,   msBassLabel);   // Bass Mono
+        placeKnob (pcolP (3, postKA), widthSlider,    widthLabel);
         // Bass Mono enable: a small square LED toggle sitting just under its knob
         auto kb = msBassSlider.getBounds();
         msButton.setBounds (juce::Rectangle<int> (18, 16).withCentre ({ kb.getCentreX(), kb.getCentreY() + 30 }));
+    }
+    {   // VOLUME (Dry/Wet/Output)
+        placeKnob (pcolV (0, volKA), drySlider,    dryLabel);
+        placeKnob (pcolV (1, volKA), wetSlider,    wetLabel);
+        placeKnob (pcolV (2, volKA), outputSlider, outputLabel);
     }
     {
         auto row = knobArea (duckPanel);
@@ -950,17 +959,17 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (row.removeFromLeft (cellW), duckSlider,    duckLabel);
         placeKnob (row.removeFromLeft (cellW), duckRelSlider, duckRelLabel);
     }
-    {   // IR SHAPE — 5 knobs under the shared post grid, then the IR meter, then the toggles
+    {   // IR SHAPE — aligned under POST (cols 0-3) then VOLUME (Stretch, Damp, toggles)
         auto row = knobArea (shapePanel);
-        placeKnob (pcol (0, row), irGainSlider,  irGainLabel);    // under Pre-Delay
-        placeKnob (pcol (1, row), fadeInSlider,  fadeInLabel);    // under Tone
-        placeKnob (pcol (2, row), decaySlider,   decayLabel);     // under Bass Mono
-        placeKnob (pcol (3, row), taperSlider,   taperLabel);     // under Width
-        placeKnob (pcol (4, row), stretchSlider, stretchLabel);   // under Dry
-        placeKnob (pcol (5, row), dampSlider,    dampLabel);      // under Wet
-        // toggle column under the Output column (col 6)
+        placeKnob (pcolP (0, row), irGainSlider,  irGainLabel);    // under Pre-Delay
+        placeKnob (pcolP (1, row), fadeInSlider,  fadeInLabel);    // under Tone
+        placeKnob (pcolP (2, row), decaySlider,   decayLabel);     // under Bass Mono
+        placeKnob (pcolP (3, row), taperSlider,   taperLabel);     // under Width
+        placeKnob (pcolV (0, row), stretchSlider, stretchLabel);   // under Dry
+        placeKnob (pcolV (1, row), dampSlider,    dampLabel);      // under Wet
+        // toggle column under the Output column
         const int btnH = 28, gap = 6, colH = btnH * 3 + gap * 2;
-        const int togLeft  = postGrid.getX() + 6 * cw;
+        const int togLeft  = volKA.getX() + 2 * cwV;
         const int togRight = outputSlider.getBounds().getRight();
         auto toggles = juce::Rectangle<int> (togLeft, row.getCentreY() - colH / 2,
                                              togRight - togLeft, colH);
