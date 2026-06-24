@@ -928,8 +928,8 @@ void ConvoAudioProcessorEditor::resized()
     row1.removeFromLeft (10);
     auto postArea = row1;                       // full post-area span (the old POST panel)
     const int splitX = postArea.getWidth() / 2;
-    postPanel   = postArea.withWidth (splitX - 4);          // POST:   Tone / Width / Pre-Delay
-    volumePanel = postArea.withTrimmedLeft (splitX + 4);    // VOLUME: Dry / Wet / Output
+    postPanel   = postArea.withWidth (splitX - 5);          // POST:   Tone / Width / Pre-Delay
+    volumePanel = postArea.withTrimmedLeft (splitX + 5);    // VOLUME: Dry / Wet / Output (10 px gap, matching the others)
     area.removeFromTop (10);
     auto row2 = area.removeFromTop (170);
     duckPanel = row2.removeFromLeft (188);   // smaller — just the two ducking knobs
