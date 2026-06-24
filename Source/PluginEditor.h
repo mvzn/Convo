@@ -98,10 +98,10 @@ private:
     // parameter controls
     juce::Slider drySlider, wetSlider, irGainSlider, outputSlider, toneSlider, inHPSlider, inLPSlider,
                  preDelaySlider, widthSlider, msBassSlider,
-                 duckSlider, duckRelSlider, fadeInSlider, decaySlider, taperSlider, stretchSlider;
+                 duckSlider, duckRelSlider, fadeInSlider, decaySlider, taperSlider, stretchSlider, dampSlider;
     juce::Label  dryLabel, wetLabel, irGainLabel, outputLabel, toneLabel, inHPLabel, inLPLabel,
                  preDelayLabel, widthLabel, msBassLabel,
-                 duckLabel, duckRelLabel, fadeInLabel, decayLabel, taperLabel, stretchLabel;
+                 duckLabel, duckRelLabel, fadeInLabel, decayLabel, taperLabel, stretchLabel, dampLabel;
     juce::ToggleButton reverseButton { "Reverse" }, rawLevelButton { "Raw IR" }, filterIRButton { "Filter IR" },
                        clipGuardButton { "Clip Guard" }, wetCompButton { "Wet Comp" },
                        msButton { "" },               // Bass Mono enable — embedded (LED only) on the X-Over knob
@@ -111,15 +111,14 @@ private:
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<SliderAttachment> dryAtt, wetAtt, irGainAtt, outputAtt, toneAtt, inHPAtt, inLPAtt,
                                       preDelayAtt, widthAtt, msBassAtt,
-                                      duckAtt, duckRelAtt, fadeInAtt, decayAtt, taperAtt, stretchAtt;
+                                      duckAtt, duckRelAtt, fadeInAtt, decayAtt, taperAtt, stretchAtt, dampAtt;
     std::unique_ptr<ButtonAttachment> reverseAtt, rawLevelAtt, filterIRAtt, clipGuardAtt, wetCompAtt, msAtt, bypassAtt;
 
     // meters: shown values + slower-decaying peak-hold lines, with last-painted
     // copies so the timer can skip repaints when nothing moved
-    float inMeter = 0.0f, outMeter = 0.0f, irMeter = 0.0f;
-    float inPeak  = 0.0f, outPeak  = 0.0f, irPeak  = 0.0f;
+    float inMeter = 0.0f, outMeter = 0.0f;
+    float inPeak  = 0.0f, outPeak  = 0.0f;
     float inShown = -1.0f, outShown = -1.0f, inPeakShown = -1.0f, outPeakShown = -1.0f;
-    float irShown = -1.0f, irPeakShown = -1.0f;
 
     // last-seen values of the overlay params (tone / In HP / In LP / X-Over / Bass Mono) so the
     // timer can repaint the wave layer when they move — they are not bake params
@@ -139,7 +138,7 @@ private:
     juce::Path eqCurvePath;
     float      monoMarkerX = -1.0f;    // bass-mono marker x in waveZone coords; < 0 = hidden
     juce::dsp::IIR::Coefficients<float>::Ptr eqLo, eqHi, eqHp, eqLp;  // reused -> no per-redraw alloc
-    juce::ColourGradient inMeterGrad, outMeterGrad, irMeterGrad;   // cached -> no per-frame gradient alloc
+    juce::ColourGradient inMeterGrad, outMeterGrad;   // cached -> no per-frame gradient alloc
 
     std::unique_ptr<juce::FileChooser> chooser;
 
@@ -152,7 +151,7 @@ private:
 
     // layout regions (used by paint)
     juce::Rectangle<int> headerZone, dropZone, waveZone, inMeterZone, outMeterZone,
-                         filterPanel, postPanel, volumePanel, duckPanel, shapePanel, irMeterZone;
+                         filterPanel, postPanel, volumePanel, duckPanel, shapePanel;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessorEditor)
 };

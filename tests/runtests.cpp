@@ -792,6 +792,45 @@ void test_bake_stretch()
     std::printf ("        (len %d -> 2.0x:%d  0.5x:%d)\n", n, up.getNumSamples(), down.getNumSamples());
 }
 
+// =========================================================================
+// bake() — damping: progressive HF rolloff over the tail  (archetype: property)
+// =========================================================================
+void test_bake_damp()
+{
+    std::printf ("\n== bake: damping (HF rolloff over tail) ==\n");
+    const int n = 4000;
+    juce::AudioBuffer<float> raw (1, n);
+    juce::Random rng (7);
+    for (int i = 0; i < n; ++i) raw.setSample (0, i, rng.nextFloat() * 2.0f - 1.0f);   // broadband (white) IR
+
+    // HF-content ratio over a window, via first-difference energy / total energy (gain-invariant)
+    auto hfRatio = [] (const juce::AudioBuffer<float>& b, int start, int len)
+    {
+        const float* x = b.getReadPointer (0);
+        double hf = 0.0, tot = 0.0;
+        for (int i = start + 1; i < start + len; ++i)
+        {
+            const double d = (double) x[i] - (double) x[i - 1];
+            hf += d * d; tot += (double) x[i] * (double) x[i];
+        }
+        return tot > 1.0e-12 ? hf / tot : 0.0;
+    };
+
+    auto bp = plainBake();           // no fade/decay/taper, raw level
+    bp.dampAmt = 1.0f;
+    auto damped = ConvolutionEngine::bake (raw, kFs, bp);
+    bp.dampAmt = 0.0f;
+    auto dry    = ConvolutionEngine::bake (raw, kFs, bp);
+
+    const int q = n / 4;
+    const double onsetHF = hfRatio (damped, 0,     q);   // first quarter (blend ~0 -> dry)
+    const double tailHF  = hfRatio (damped, n - q, q);   // last quarter  (blend ~1 -> low-passed)
+    expectTrue (tailHF < onsetHF * 0.6, "damped tail is darker than its onset");
+    expectTrue (hfRatio (dry, n - q, q) > tailHF, "damping lowers the tail HF vs undamped");
+    expectTrue (damped.getNumSamples() == n, "damping preserves length");
+    std::printf ("        (HF ratio onset %.3f -> tail %.3f)\n", onsetHF, tailHF);
+}
+
 } // namespace
 
 int main()
@@ -822,6 +861,7 @@ int main()
     test_irlibrary_cap();
     test_conv_nan_smoke();
     test_bake_stretch();
+    test_bake_damp();
 
     std::printf ("\n====================\n%d passed, %d failed\n", gPasses, gFails);
     return gFails == 0 ? 0 : 1;

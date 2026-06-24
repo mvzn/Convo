@@ -31,6 +31,7 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     decayParam    = apvts.getRawParameterValue ("decay");
     taperParam    = apvts.getRawParameterValue ("taper");
     stretchParam  = apvts.getRawParameterValue ("stretch");
+    dampParam     = apvts.getRawParameterValue ("damp");
     reverseParam  = apvts.getRawParameterValue ("reverse");
     rawLevelParam = apvts.getRawParameterValue ("irRaw");
     clipGuardParam = apvts.getRawParameterValue ("clipGuard");
@@ -141,6 +142,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "stretch", 1 }, "Stretch",
         NormalisableRange<float> (25.0f, 400.0f, 1.0f, 0.5f), 100.0f, "%"));
+
+    // damping (bake): progressive HF rolloff over the tail (air absorption). 0 = off.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "damp", 1 }, "Damp",
+        NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f, "%"));
 
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "reverse", 1 }, "Reverse", false));
@@ -573,14 +579,6 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     const float relCoeff  = std::exp (-1.0f / juce::jmax (1.0f, relMs * 0.001f * (float) currentSampleRate));
     clipGuardSm.setTargetValue (clipGuardParam->load() > 0.5f ? 1.0f : 0.0f);
 
-    // IR meter: peak of the convolved (wet) signal scaled by IR Gain -> the IR path's level
-    // (decaying hold, same as the in/out meters; the dry/wet mix gains are not included)
-    float magWet = 0.0f;
-    for (int ch = 0; ch < numCh; ++ch)
-        magWet = juce::jmax (magWet, wetWork.getMagnitude (ch, 0, numSamples));
-    irLevel.store (juce::jmax (magWet * juce::Decibels::decibelsToGain (irGainParam->load(), -60.0f),
-                               irLevel.load() * 0.85f));
-
     for (int i = 0; i < numSamples; ++i)
     {
         // mono dry envelope (instant attack, param release) for ducking
@@ -635,6 +633,7 @@ IRBakeParams ConvoAudioProcessor::currentBakeParams() const
     p.decaySeconds = dec * 0.001f;
     p.taperMs      = taperParam->load();
     p.stretch      = stretchParam->load() * 0.01f;   // % -> factor
+    p.dampAmt      = dampParam->load() * 0.01f;      // % -> 0..1
     p.reverse      = reverseParam->load() > 0.5f;
     p.autoLevel    = rawLevelParam->load() < 0.5f;
     p.filterIR     = filterIRParam->load() > 0.5f;

@@ -178,6 +178,44 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
     if (lEff < len)
         out.setSize (numCh, lEff, true, true, true);
 
+    // 5b. damping: progressive HF rolloff over the tail (air absorption). Crossfade the kernel
+    //     toward a first-order low-passed copy, the blend ramping 0 (onset) -> 1 (tail end), with
+    //     the cutoff falling as Damp rises. Placed before auto-level so loudness stays normalised
+    //     as Damp changes (only the spectral balance shifts). 0 = off (skipped).
+    if (bp.dampAmt > 0.001f)
+    {
+        const float  amt = juce::jlimit (0.0f, 1.0f, bp.dampAmt);
+        const double fc  = juce::jmin (18000.0 * std::pow (1000.0 / 18000.0, (double) amt),   // 18 kHz -> ~1 kHz
+                                       irSampleRate * 0.45);                                   // stay below Nyquist
+        const int    dn  = out.getNumSamples();
+
+        juce::AudioBuffer<float> lp;
+        lp.makeCopyOf (out);
+        {
+            juce::dsp::ProcessSpec ds { irSampleRate, (juce::uint32) juce::jmax (1, dn), (juce::uint32) numCh };
+            juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
+                                           juce::dsp::IIR::Coefficients<float>> lpf;
+            lpf.prepare (ds);
+            *lpf.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass (irSampleRate, fc);
+            lpf.reset();
+            juce::dsp::AudioBlock<float> lb (lp);
+            juce::dsp::ProcessContextReplacing<float> lctx (lb);
+            lpf.process (lctx);
+        }
+
+        const float denom = (float) juce::jmax (1, dn - 1);
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            float*       d = out.getWritePointer (ch);
+            const float* l = lp.getReadPointer (ch);
+            for (int i = 0; i < dn; ++i)
+            {
+                const float g = (float) i / denom;        // 0 at onset -> 1 at the tail end
+                d[i] = d[i] * (1.0f - g) + l[i] * g;
+            }
+        }
+    }
+
     // 6. auto-level: one gain for all channels (stereo balance preserved) so the
     //    loudest channel has unit energy. A true IR (a decaying impulse, energy ~1)
     //    is barely touched; dense full-scale audio used as an IR — which would

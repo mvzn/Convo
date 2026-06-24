@@ -24,6 +24,9 @@ struct IRBakeParams
     float inLPHz = 20000.0f;   // first-order low-pass  cutoff baked into the kernel
     float stretch = 1.0f;      // time-stretch factor: resample the IR to this multiple of its
                                // length before windowing (1.0 = off; <1 shortens, >1 lengthens)
+    float dampAmt = 0.0f;      // damping 0..1: progressive HF rolloff over the tail (air
+                               // absorption). 0 = off; crossfades the kernel toward a low-passed
+                               // copy, the blend ramping 0 (onset) -> 1 (tail end)
 
     bool operator== (const IRBakeParams& o) const noexcept
     {
@@ -34,6 +37,7 @@ struct IRBakeParams
             && juce::approximatelyEqual (decaySeconds, o.decaySeconds)
             && decayOff == o.decayOff
             && juce::approximatelyEqual (taperMs, o.taperMs)
+            && juce::approximatelyEqual (dampAmt, o.dampAmt)
             && reverse == o.reverse
             && autoLevel == o.autoLevel
             && filterIR == o.filterIR
