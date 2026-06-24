@@ -402,7 +402,7 @@ void ConvoAudioProcessorEditor::renderBackground()
     panel (shapePanel,  "IR SHAPE");
 
     // IR meter: a slim recessed level well (matching the in/out meter wells) with a fine dB scale
-    // and an "IR" cap, in the strip left of the IR SHAPE knobs. The live fill is drawn in paint().
+    // and an "IR" cap, in the strip between the IR SHAPE knobs and the toggles. Live fill in paint().
     if (! irMeterZone.isEmpty())
     {
         auto t = irMeterZone.toFloat();
@@ -982,20 +982,21 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (row.removeFromLeft (cellW), duckSlider,    duckLabel);
         placeKnob (row.removeFromLeft (cellW), duckRelSlider, duckRelLabel);
     }
-    {   // IR SHAPE — aligned under the shared post grid (5 knobs + the toggle column)
+    {   // IR SHAPE — 5 knobs under the shared post grid, then the IR meter, then the toggles
         auto row = knobArea (shapePanel);
-        // IR meter: a slim recessed level meter in the strip left of the first knob (16px of
-        // headroom at the top for the "IR" cap); shares the in/out meter gradient
-        irMeterZone = juce::Rectangle<int> (row.getX() + 6, row.getY() + 16, 9, row.getHeight() - 18);
-        irMeterGrad = meterGrad (irMeterZone);
         placeKnob (pcol (0, row), irGainSlider,  irGainLabel);    // under Bass Mono
         placeKnob (pcol (1, row), fadeInSlider,  fadeInLabel);    // under Tone
         placeKnob (pcol (2, row), decaySlider,   decayLabel);     // under Width
         placeKnob (pcol (3, row), taperSlider,   taperLabel);     // under Pre-Delay
         placeKnob (pcol (4, row), stretchSlider, stretchLabel);   // under Dry
-        // toggle column spans the last two columns (under Wet + Output); LED at the right edge
+        // IR meter: a slim recessed level meter between the last knob (Stretch) and the toggles
+        // (16px of headroom at the top for the "IR" cap); shares the in/out meter gradient
+        const int meterX = postGrid.getX() + 5 * cw + 6;
+        irMeterZone = juce::Rectangle<int> (meterX, row.getY() + 16, 9, row.getHeight() - 18);
+        irMeterGrad = meterGrad (irMeterZone);
+        // toggle column fills the rest (under Wet + Output), to the right of the meter
         const int btnH = 28, gap = 6, colH = btnH * 3 + gap * 2;
-        const int togLeft  = postGrid.getX() + 5 * cw;
+        const int togLeft  = meterX + 9 + 12;
         const int togRight = outputSlider.getBounds().getRight();
         auto toggles = juce::Rectangle<int> (togLeft, row.getCentreY() - colH / 2,
                                              togRight - togLeft, colH);
