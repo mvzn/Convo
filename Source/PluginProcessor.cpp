@@ -408,81 +408,10 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
     convolution.process (wetBlock);
 
-    // bass mono: collapse the wet below the crossover to mono, leave the rest stereo.
-    // Encode M/S, high-pass the side at the crossover (first-order, 6 dB/oct — the gentlest,
-    // cleanest-phase split), decode — above the crossover the M/S round-trip is sample-exact,
-    // so that band is identical to the bass-mono-off path. Only acts on a stereo IR: a mono
-    // kernel is processed exactly like the feature off (the mono IR convolves both input
-    // channels). 20 Hz crossover / feature off / mono IR => skipped (a bit-exact passthrough);
-    // the side filter resets on re-engage so the toggle stays clean.
-    {
-        const bool bassMonoOn = msParam->load() > 0.5f && numCh >= 2 && kernelStereo.load();
-        msBassSm.setTargetValue (msBassParam->load());
-        const float bassFc = msBassSm.skip (numSamples);
-        const bool bassActive = bassMonoOn && (msBassSm.isSmoothing() || bassFc > 21.0f);
-        if (bassActive != prevBassActive) { if (bassActive) sideHP.reset(); prevBassActive = bassActive; }
-        if (bassActive)
-        {
-            convo::msEncode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
-            *sideHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (currentSampleRate, bassFc);
-            auto sideBlock = wetBlock.getSingleChannelBlock (1);
-            juce::dsp::ProcessContextReplacing<float> sctx (sideBlock);
-            sideHP.process (sctx);
-            convo::msDecode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
-        }
-    }
-
-    // tone (tilt): rebuild shelf coefficients once per block from the smoothed value.
-    // ArrayCoefficients + Coefficients::operator= reuse the existing array storage,
-    // so this is allocation-free (unlike makeLowShelf(), which news a Coefficients).
-    {
-        toneSm.setTargetValue (toneParam->load());
-        const float tonePct = toneSm.skip (numSamples) * 0.01f;     // -1..1
-        // tilt is flat at tone == 0 (unity shelves) -> skip both passes; reset on re-engage
-        const bool toneActive = toneSm.isSmoothing() || std::abs (tonePct) > 0.0005f;
-        if (toneActive != prevToneActive) { if (toneActive) { lowShelf.reset(); highShelf.reset(); } prevToneActive = toneActive; }
-        if (toneActive)
-        {
-            const float tiltDb = tonePct * 12.0f;
-            *lowShelf.state  = juce::dsp::IIR::ArrayCoefficients<float>::makeLowShelf  (
-                currentSampleRate, 700.0f, 0.5f, juce::Decibels::decibelsToGain (-tiltDb));
-            *highShelf.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighShelf (
-                currentSampleRate, 700.0f, 0.5f, juce::Decibels::decibelsToGain ( tiltDb));
-
-            juce::dsp::ProcessContextReplacing<float> wctx (wetBlock);
-            lowShelf.process (wctx);
-            highShelf.process (wctx);
-        }
-    }
-
-    // width (M/S) on the wet, smoothed per sample (stereo only). Skipped when steady at
-    // 100%: there w == 1 and mid +/- side reconstructs L/R bit-exactly, so the loop is a
-    // no-op pass we can avoid (the common default case).
-    if (numCh >= 2)
-    {
-        widthSm.setTargetValue (widthParam->load() * 0.01f);
-        if (widthSm.isSmoothing() || ! juce::approximatelyEqual (widthSm.getTargetValue(), 1.0f))
-        {
-            auto* L = wetWork.getWritePointer (0);
-            auto* R = wetWork.getWritePointer (1);
-            for (int i = 0; i < numSamples; ++i)
-            {
-                const float w    = widthSm.getNextValue();
-                const float mid  = 0.5f * (L[i] + R[i]);
-                const float side = 0.5f * (L[i] - R[i]) * w;
-                L[i] = mid + side;
-                R[i] = mid - side;
-            }
-        }
-        else
-        {
-            widthSm.skip (numSamples);
-        }
-    }
-    else
-    {
-        widthSm.skip (numSamples);
-    }
+    // Post-convolution wet shaping, in signal-flow order: pre-delay -> tone -> bass mono ->
+    // width. These stages are all linear, so the order is sound-invariant — it just mirrors
+    // the mental model (the reverb arrives after the pre-delay, then we colour it, then place
+    // its stereo image).
 
     // pre-delay on the wet (creative offset; not reported as latency). Skipped at ~0 ms
     // (a no-op passthrough); the line is reset on re-engage so it can't pop stale samples.
@@ -520,6 +449,82 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         {
             preDelaySm.skip (numSamples);
         }
+    }
+
+    // tone (tilt): rebuild shelf coefficients once per block from the smoothed value.
+    // ArrayCoefficients + Coefficients::operator= reuse the existing array storage,
+    // so this is allocation-free (unlike makeLowShelf(), which news a Coefficients).
+    {
+        toneSm.setTargetValue (toneParam->load());
+        const float tonePct = toneSm.skip (numSamples) * 0.01f;     // -1..1
+        // tilt is flat at tone == 0 (unity shelves) -> skip both passes; reset on re-engage
+        const bool toneActive = toneSm.isSmoothing() || std::abs (tonePct) > 0.0005f;
+        if (toneActive != prevToneActive) { if (toneActive) { lowShelf.reset(); highShelf.reset(); } prevToneActive = toneActive; }
+        if (toneActive)
+        {
+            const float tiltDb = tonePct * 12.0f;
+            *lowShelf.state  = juce::dsp::IIR::ArrayCoefficients<float>::makeLowShelf  (
+                currentSampleRate, 700.0f, 0.5f, juce::Decibels::decibelsToGain (-tiltDb));
+            *highShelf.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighShelf (
+                currentSampleRate, 700.0f, 0.5f, juce::Decibels::decibelsToGain ( tiltDb));
+
+            juce::dsp::ProcessContextReplacing<float> wctx (wetBlock);
+            lowShelf.process (wctx);
+            highShelf.process (wctx);
+        }
+    }
+
+    // bass mono: collapse the wet below the crossover to mono, leave the rest stereo.
+    // Encode M/S, high-pass the side at the crossover (first-order, 6 dB/oct — the gentlest,
+    // cleanest-phase split), decode — above the crossover the M/S round-trip is sample-exact,
+    // so that band is identical to the bass-mono-off path. Only acts on a stereo IR: a mono
+    // kernel is processed exactly like the feature off (the mono IR convolves both input
+    // channels). 20 Hz crossover / feature off / mono IR => skipped (a bit-exact passthrough);
+    // the side filter resets on re-engage so the toggle stays clean.
+    {
+        const bool bassMonoOn = msParam->load() > 0.5f && numCh >= 2 && kernelStereo.load();
+        msBassSm.setTargetValue (msBassParam->load());
+        const float bassFc = msBassSm.skip (numSamples);
+        const bool bassActive = bassMonoOn && (msBassSm.isSmoothing() || bassFc > 21.0f);
+        if (bassActive != prevBassActive) { if (bassActive) sideHP.reset(); prevBassActive = bassActive; }
+        if (bassActive)
+        {
+            convo::msEncode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
+            *sideHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (currentSampleRate, bassFc);
+            auto sideBlock = wetBlock.getSingleChannelBlock (1);
+            juce::dsp::ProcessContextReplacing<float> sctx (sideBlock);
+            sideHP.process (sctx);
+            convo::msDecode (wetWork.getWritePointer (0), wetWork.getWritePointer (1), numSamples);
+        }
+    }
+
+    // width (M/S) on the wet, smoothed per sample (stereo only). Skipped when steady at
+    // 100%: there w == 1 and mid +/- side reconstructs L/R bit-exactly, so the loop is a
+    // no-op pass we can avoid (the common default case).
+    if (numCh >= 2)
+    {
+        widthSm.setTargetValue (widthParam->load() * 0.01f);
+        if (widthSm.isSmoothing() || ! juce::approximatelyEqual (widthSm.getTargetValue(), 1.0f))
+        {
+            auto* L = wetWork.getWritePointer (0);
+            auto* R = wetWork.getWritePointer (1);
+            for (int i = 0; i < numSamples; ++i)
+            {
+                const float w    = widthSm.getNextValue();
+                const float mid  = 0.5f * (L[i] + R[i]);
+                const float side = 0.5f * (L[i] - R[i]) * w;
+                L[i] = mid + side;
+                R[i] = mid - side;
+            }
+        }
+        else
+        {
+            widthSm.skip (numSamples);
+        }
+    }
+    else
+    {
+        widthSm.skip (numSamples);
     }
 
     // align the dry tap to the engine latency
