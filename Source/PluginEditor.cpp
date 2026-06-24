@@ -395,7 +395,7 @@ void ConvoAudioProcessorEditor::renderBackground()
     };
 
     panel (dropZone,    {});
-    panel (prePanel,    "PRE");
+    panel (filterPanel, "FILTER");
     panel (postPanel,   "POST");
     panel (volumePanel, "VOLUME");
     panel (duckPanel,   "DUCKING");
@@ -921,18 +921,15 @@ void ConvoAudioProcessorEditor::resized()
 
     area.removeFromTop (10);
     auto row1 = area.removeFromTop (170);
-    // PRE (3 knobs) | POST (3) + VOLUME (3). The post-area stays one shared 6-column grid so the
-    // IR SHAPE row below lines up under it exactly — POST and VOLUME are just two panels drawn
-    // over that grid (split in the middle), so no knob moves.
-    prePanel  = row1.removeFromLeft (juce::roundToInt ((row1.getWidth() - 10) * 3.0f / 11.0f));
+    // FILTER (In HP / In LP) | POST (Bass Mono / Tone / Width / Pre-Delay) | VOLUME (Dry / Wet /
+    // Output). POST + VOLUME share one 7-column grid so the IR SHAPE row lines up under them;
+    // FILTER is its own 2-knob group on the left (DUCKING below it shares its width).
+    filterPanel = row1.removeFromLeft (juce::roundToInt ((row1.getWidth() - 10) * 2.0f / 9.0f));
     row1.removeFromLeft (10);
-    auto postArea = row1;                       // full post-area span (the old POST panel)
-    const int splitX = postArea.getWidth() / 2;
-    postPanel   = postArea.withWidth (splitX - 5);          // POST:   Tone / Width / Pre-Delay
-    volumePanel = postArea.withTrimmedLeft (splitX + 5);    // VOLUME: Dry / Wet / Output (10 px gap, matching the others)
+    auto postArea = row1;                       // POST + VOLUME share this span (7 columns)
     area.removeFromTop (10);
     auto row2 = area.removeFromTop (170);
-    duckPanel = row2.removeFromLeft (188);   // smaller — just the two ducking knobs
+    duckPanel = row2.removeFromLeft (filterPanel.getWidth());   // DUCKING sits under FILTER
     row2.removeFromLeft (10);
     shapePanel = row2;                        // IR SHAPE gets the rest (bake controls + IR Gain)
 
@@ -949,27 +946,32 @@ void ConvoAudioProcessorEditor::resized()
         return r;
     };
 
-    // shared 6-column grid over the post-area, reused by POST/VOLUME and the IR SHAPE row so
+    // shared 7-column grid over the post-area, reused by POST/VOLUME and the IR SHAPE row so
     // every column lines up vertically regardless of where the POST|VOLUME panels split
     auto postGrid = knobArea (postArea);
-    const int cw = postGrid.getWidth() / 6;
+    const int cw = postGrid.getWidth() / 7;
     auto pcol = [&] (int i, juce::Rectangle<int> rowArea)
     { return juce::Rectangle<int> (postGrid.getX() + i * cw, rowArea.getY(), cw, rowArea.getHeight()); };
 
-    {   // PRE — pre-convolution filters that shape what feeds the IR
-        auto row = knobArea (prePanel);
-        const int cellW = row.getWidth() / 3;
-        placeKnob (row.removeFromLeft (cellW), inHPSlider,     inHPLabel);
-        placeKnob (row.removeFromLeft (cellW), inLPSlider,     inLPLabel);
-        placeKnob (row.removeFromLeft (cellW), preDelaySlider, preDelayLabel);
+    // POST = cols 0-3, VOLUME = cols 4-6; split the panel backgrounds at the col3/col4 boundary
+    const int splitOff = (postGrid.getX() - postArea.getX()) + 4 * cw;
+    postPanel   = postArea.withWidth (splitOff - 5);
+    volumePanel = postArea.withTrimmedLeft (splitOff + 5);
+
+    {   // FILTER — pre-IR input filters
+        auto row = knobArea (filterPanel);
+        const int cellW = row.getWidth() / 2;
+        placeKnob (row.removeFromLeft (cellW), inHPSlider, inHPLabel);
+        placeKnob (row.removeFromLeft (cellW), inLPSlider, inLPLabel);
     }
-    {   // POST (Bass Mono/Tone/Width) + VOLUME (Dry/Wet/Output) on the shared grid
+    {   // POST (Bass Mono/Tone/Width/Pre-Delay) + VOLUME (Dry/Wet/Output) on the shared grid
         placeKnob (pcol (0, postGrid), msBassSlider,   msBassLabel);   // Bass Mono first
         placeKnob (pcol (1, postGrid), toneSlider,     toneLabel);
         placeKnob (pcol (2, postGrid), widthSlider,    widthLabel);
-        placeKnob (pcol (3, postGrid), drySlider,      dryLabel);
-        placeKnob (pcol (4, postGrid), wetSlider,      wetLabel);
-        placeKnob (pcol (5, postGrid), outputSlider,   outputLabel);
+        placeKnob (pcol (3, postGrid), preDelaySlider, preDelayLabel);
+        placeKnob (pcol (4, postGrid), drySlider,      dryLabel);
+        placeKnob (pcol (5, postGrid), wetSlider,      wetLabel);
+        placeKnob (pcol (6, postGrid), outputSlider,   outputLabel);
         // Bass Mono enable: a small square LED toggle sitting just under its knob
         auto kb = msBassSlider.getBounds();
         msButton.setBounds (juce::Rectangle<int> (18, 16).withCentre ({ kb.getCentreX(), kb.getCentreY() + 30 }));
@@ -989,9 +991,9 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (pcol (0, row), irGainSlider,  irGainLabel);    // under Bass Mono
         placeKnob (pcol (1, row), fadeInSlider,  fadeInLabel);    // under Tone
         placeKnob (pcol (2, row), decaySlider,   decayLabel);     // under Width
-        placeKnob (pcol (3, row), taperSlider,   taperLabel);     // under Dry
-        placeKnob (pcol (4, row), stretchSlider, stretchLabel);   // under Wet
-        // toggle column fills the Output column; LED right edge by the Output knob's right edge
+        placeKnob (pcol (3, row), taperSlider,   taperLabel);     // under Pre-Delay
+        placeKnob (pcol (4, row), stretchSlider, stretchLabel);   // under Dry
+        // toggle column spans the last two columns (under Wet + Output); LED at the right edge
         const int btnH = 28, gap = 6, colH = btnH * 3 + gap * 2;
         const int togLeft  = postGrid.getX() + 5 * cw;
         const int togRight = outputSlider.getBounds().getRight();

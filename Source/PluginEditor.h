@@ -152,7 +152,7 @@ private:
 
     // layout regions (used by paint)
     juce::Rectangle<int> headerZone, dropZone, waveZone, inMeterZone, outMeterZone,
-                         prePanel, postPanel, volumePanel, duckPanel, shapePanel, irMeterZone;
+                         filterPanel, postPanel, volumePanel, duckPanel, shapePanel, irMeterZone;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessorEditor)
 };
