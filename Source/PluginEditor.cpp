@@ -397,6 +397,7 @@ void ConvoAudioProcessorEditor::renderBackground()
     panel (dropZone,    {});
     panel (prePanel,    "PRE");
     panel (postPanel,   "POST");
+    panel (volumePanel, "VOLUME");
     panel (duckPanel,   "DUCKING");
     panel (shapePanel,  "IR SHAPE");
 
@@ -920,10 +921,15 @@ void ConvoAudioProcessorEditor::resized()
 
     area.removeFromTop (10);
     auto row1 = area.removeFromTop (170);
-    // split PRE (3 knobs) / POST (6 knobs) ~proportionally so the cells stay roughly even-width
+    // PRE (3 knobs) | POST (3) + VOLUME (3). The post-area stays one shared 6-column grid so the
+    // IR SHAPE row below lines up under it exactly — POST and VOLUME are just two panels drawn
+    // over that grid (split in the middle), so no knob moves.
     prePanel  = row1.removeFromLeft (juce::roundToInt ((row1.getWidth() - 10) * 3.0f / 11.0f));
     row1.removeFromLeft (10);
-    postPanel = row1;                         // POST: post-conv shaping + mix
+    auto postArea = row1;                       // full post-area span (the old POST panel)
+    const int splitX = postArea.getWidth() / 2;
+    postPanel   = postArea.withWidth (splitX - 4);          // POST:   Tone / Width / Pre-Delay
+    volumePanel = postArea.withTrimmedLeft (splitX + 4);    // VOLUME: Dry / Wet / Output
     area.removeFromTop (10);
     auto row2 = area.removeFromTop (170);
     duckPanel = row2.removeFromLeft (188);   // smaller — just the two ducking knobs
@@ -943,24 +949,30 @@ void ConvoAudioProcessorEditor::resized()
         return r;
     };
 
+    // shared 6-column grid over the post-area, reused by POST/VOLUME and the IR SHAPE row so
+    // every column lines up vertically regardless of where the POST|VOLUME panels split
+    auto postGrid = knobArea (postArea);
+    const int cw = postGrid.getWidth() / 6;
+    auto pcol = [&] (int i, juce::Rectangle<int> rowArea)
+    { return juce::Rectangle<int> (postGrid.getX() + i * cw, rowArea.getY(), cw, rowArea.getHeight()); };
+
     {   // PRE — pre-convolution filters that shape what feeds the IR
         auto row = knobArea (prePanel);
         const int cellW = row.getWidth() / 3;
         placeKnob (row.removeFromLeft (cellW), inHPSlider,   inHPLabel);
         placeKnob (row.removeFromLeft (cellW), inLPSlider,   inLPLabel);
         placeKnob (row.removeFromLeft (cellW), msBassSlider, msBassLabel);
-        // Bass Mono enable is embedded on the knob: a small square LED toggle on the cap
-        msButton.setBounds (juce::Rectangle<int> (16, 16).withCentre (msBassSlider.getBounds().getCentre()));
+        // Bass Mono enable: a small square LED toggle sitting just under the knob cap
+        auto kb = msBassSlider.getBounds();
+        msButton.setBounds (juce::Rectangle<int> (18, 16).withCentre ({ kb.getCentreX(), kb.getCentreY() + 40 }));
     }
-    {   // POST — post-convolution shaping + final mix
-        auto row = knobArea (postPanel);
-        const int cellW = row.getWidth() / 6;
-        placeKnob (row.removeFromLeft (cellW), toneSlider,     toneLabel);
-        placeKnob (row.removeFromLeft (cellW), widthSlider,    widthLabel);
-        placeKnob (row.removeFromLeft (cellW), preDelaySlider, preDelayLabel);
-        placeKnob (row.removeFromLeft (cellW), drySlider,      dryLabel);
-        placeKnob (row.removeFromLeft (cellW), wetSlider,      wetLabel);
-        placeKnob (row.removeFromLeft (cellW), outputSlider,   outputLabel);
+    {   // POST (Tone/Width/Pre-Delay) + VOLUME (Dry/Wet/Output) on the shared grid
+        placeKnob (pcol (0, postGrid), toneSlider,     toneLabel);
+        placeKnob (pcol (1, postGrid), widthSlider,    widthLabel);
+        placeKnob (pcol (2, postGrid), preDelaySlider, preDelayLabel);
+        placeKnob (pcol (3, postGrid), drySlider,      dryLabel);
+        placeKnob (pcol (4, postGrid), wetSlider,      wetLabel);
+        placeKnob (pcol (5, postGrid), outputSlider,   outputLabel);
     }
     {
         auto row = knobArea (duckPanel);
@@ -968,26 +980,20 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (row.removeFromLeft (cellW), duckSlider,    duckLabel);
         placeKnob (row.removeFromLeft (cellW), duckRelSlider, duckRelLabel);
     }
-    {   // IR SHAPE — everything that changes the IR bake, plus IR Gain
-        // same knob size as POST: reuse POST's column grid, so the 5 knobs line up under Tone..Wet
-        // (Stretch under Wet) and the toggle column sits under the Output column
-        auto row     = knobArea (shapePanel);
-        auto postRow = knobArea (postPanel);
-        const int cw = postRow.getWidth() / 6;
-        auto col = [&] (int i) { return juce::Rectangle<int> (postRow.getX() + i * cw, row.getY(), cw, row.getHeight()); };
+    {   // IR SHAPE — aligned under the shared post grid (5 knobs + the toggle column)
+        auto row = knobArea (shapePanel);
         // IR meter: a slim recessed level meter in the strip left of the first knob (16px of
         // headroom at the top for the "IR" cap); shares the in/out meter gradient
         irMeterZone = juce::Rectangle<int> (row.getX() + 6, row.getY() + 16, 9, row.getHeight() - 18);
         irMeterGrad = meterGrad (irMeterZone);
-        placeKnob (col (0), irGainSlider, irGainLabel);    // under Tone
-        placeKnob (col (1), fadeInSlider, fadeInLabel);    // under Width
-        placeKnob (col (2), decaySlider,  decayLabel);     // under Pre-Delay
-        placeKnob (col (3), taperSlider,  taperLabel);     // under Dry
-        placeKnob (col (4), stretchSlider, stretchLabel);  // under Wet
+        placeKnob (pcol (0, row), irGainSlider,  irGainLabel);    // under Tone
+        placeKnob (pcol (1, row), fadeInSlider,  fadeInLabel);    // under Width
+        placeKnob (pcol (2, row), decaySlider,   decayLabel);     // under Pre-Delay
+        placeKnob (pcol (3, row), taperSlider,   taperLabel);     // under Dry
+        placeKnob (pcol (4, row), stretchSlider, stretchLabel);   // under Wet
         // toggle column fills the Output column; LED right edge by the Output knob's right edge
-        // (Bass Mono's enable is not here — it's embedded on the X-Over knob above)
         const int btnH = 28, gap = 6, colH = btnH * 3 + gap * 2;
-        const int togLeft  = postRow.getX() + 5 * cw;
+        const int togLeft  = postGrid.getX() + 5 * cw;
         const int togRight = outputSlider.getBounds().getRight();
         auto toggles = juce::Rectangle<int> (togLeft, row.getCentreY() - colH / 2,
                                              togRight - togLeft, colH);
