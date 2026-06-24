@@ -959,20 +959,20 @@ void ConvoAudioProcessorEditor::resized()
     {   // PRE — pre-convolution filters that shape what feeds the IR
         auto row = knobArea (prePanel);
         const int cellW = row.getWidth() / 3;
-        placeKnob (row.removeFromLeft (cellW), inHPSlider,   inHPLabel);
-        placeKnob (row.removeFromLeft (cellW), inLPSlider,   inLPLabel);
-        placeKnob (row.removeFromLeft (cellW), msBassSlider, msBassLabel);
-        // Bass Mono enable: a small square LED toggle sitting just under the knob cap
-        auto kb = msBassSlider.getBounds();
-        msButton.setBounds (juce::Rectangle<int> (18, 16).withCentre ({ kb.getCentreX(), kb.getCentreY() + 40 }));
+        placeKnob (row.removeFromLeft (cellW), inHPSlider,     inHPLabel);
+        placeKnob (row.removeFromLeft (cellW), inLPSlider,     inLPLabel);
+        placeKnob (row.removeFromLeft (cellW), preDelaySlider, preDelayLabel);
     }
-    {   // POST (Tone/Width/Pre-Delay) + VOLUME (Dry/Wet/Output) on the shared grid
-        placeKnob (pcol (0, postGrid), toneSlider,     toneLabel);
-        placeKnob (pcol (1, postGrid), widthSlider,    widthLabel);
-        placeKnob (pcol (2, postGrid), preDelaySlider, preDelayLabel);
+    {   // POST (Bass Mono/Tone/Width) + VOLUME (Dry/Wet/Output) on the shared grid
+        placeKnob (pcol (0, postGrid), msBassSlider,   msBassLabel);   // Bass Mono first
+        placeKnob (pcol (1, postGrid), toneSlider,     toneLabel);
+        placeKnob (pcol (2, postGrid), widthSlider,    widthLabel);
         placeKnob (pcol (3, postGrid), drySlider,      dryLabel);
         placeKnob (pcol (4, postGrid), wetSlider,      wetLabel);
         placeKnob (pcol (5, postGrid), outputSlider,   outputLabel);
+        // Bass Mono enable: a small square LED toggle sitting just under its knob
+        auto kb = msBassSlider.getBounds();
+        msButton.setBounds (juce::Rectangle<int> (18, 16).withCentre ({ kb.getCentreX(), kb.getCentreY() + 30 }));
     }
     {
         auto row = knobArea (duckPanel);
@@ -986,9 +986,9 @@ void ConvoAudioProcessorEditor::resized()
         // headroom at the top for the "IR" cap); shares the in/out meter gradient
         irMeterZone = juce::Rectangle<int> (row.getX() + 6, row.getY() + 16, 9, row.getHeight() - 18);
         irMeterGrad = meterGrad (irMeterZone);
-        placeKnob (pcol (0, row), irGainSlider,  irGainLabel);    // under Tone
-        placeKnob (pcol (1, row), fadeInSlider,  fadeInLabel);    // under Width
-        placeKnob (pcol (2, row), decaySlider,   decayLabel);     // under Pre-Delay
+        placeKnob (pcol (0, row), irGainSlider,  irGainLabel);    // under Bass Mono
+        placeKnob (pcol (1, row), fadeInSlider,  fadeInLabel);    // under Tone
+        placeKnob (pcol (2, row), decaySlider,   decayLabel);     // under Width
         placeKnob (pcol (3, row), taperSlider,   taperLabel);     // under Dry
         placeKnob (pcol (4, row), stretchSlider, stretchLabel);   // under Wet
         // toggle column fills the Output column; LED right edge by the Output knob's right edge
