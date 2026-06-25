@@ -33,7 +33,7 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     stretchParam  = apvts.getRawParameterValue ("stretch");
     dampParam     = apvts.getRawParameterValue ("damp");
     reverseParam  = apvts.getRawParameterValue ("reverse");
-    rawLevelParam = apvts.getRawParameterValue ("irRaw");
+    irNormParam   = apvts.getRawParameterValue ("irNorm");
     clipGuardParam = apvts.getRawParameterValue ("clipGuard");
     wetCompParam  = apvts.getRawParameterValue ("wetComp");
     bypassParam   = apvts.getRawParameterValue ("bypass");
@@ -151,10 +151,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "reverse", 1 }, "Reverse", false));
 
-    // off = auto-level (kernel scaled to unity energy); on = the IR's raw recorded
-    // level, which can convolve 30..45 dB hot on dense full-scale material
+    // off (default) = the IR's raw recorded level, which can convolve 30..45 dB hot on dense
+    // full-scale material; on = auto-level (kernel scaled to unity energy)
     layout.add (std::make_unique<AudioParameterBool> (
-        ParameterID { "irRaw", 1 }, "Raw IR Level", true));
+        ParameterID { "irNorm", 1 }, "Norm IR", false));
 
     // final-output soft-clip ceiling; transparent until the signal runs hot
     layout.add (std::make_unique<AudioParameterBool> (
@@ -635,7 +635,7 @@ IRBakeParams ConvoAudioProcessor::currentBakeParams() const
     p.stretch      = stretchParam->load() * 0.01f;   // % -> factor
     p.dampAmt      = dampParam->load() * 0.01f;      // % -> 0..1
     p.reverse      = reverseParam->load() > 0.5f;
-    p.autoLevel    = rawLevelParam->load() < 0.5f;
+    p.autoLevel    = irNormParam->load() > 0.5f;   // Norm IR on => auto-level; off (default) => raw
     p.filterIR     = filterIRParam->load() > 0.5f;
     p.inHPHz       = inHPParam->load();
     p.inLPHz       = inLPParam->load();
@@ -666,7 +666,7 @@ void ConvoAudioProcessor::timerCallback()
     if (cur != lastBaked && cur == lastSeenBakeParams)
     {
         const bool targetChanged = (cur.filterIR != lastBaked.filterIR);
-        // The filter-target change flips audio-thread routing; Reverse and Raw IR change the
+        // The filter-target change flips audio-thread routing; Reverse and Norm IR change the
         // kernel abruptly (reversal / a big level jump). All three are discrete toggles, so arm
         // the output fade to mask the swap and keep the toggle click-free. The continuous knobs
         // (fade-in/decay/taper) are dragged, so they keep relying on JUCE's seamless kernel

@@ -103,7 +103,7 @@ private:
     juce::Label  dryLabel, wetLabel, irGainLabel, outputLabel, toneLabel, inHPLabel, inLPLabel,
                  preDelayLabel, widthLabel, msBassLabel,
                  duckLabel, duckRelLabel, fadeInLabel, decayLabel, taperLabel, stretchLabel, dampLabel;
-    juce::ToggleButton reverseButton { "Reverse" }, rawLevelButton { "Raw IR" }, filterIRButton { "Filter IR" },
+    juce::ToggleButton reverseButton { "Reverse" }, irNormButton { "Norm IR" }, filterIRButton { "Filter IR" },
                        clipGuardButton { "Clip Guard" }, wetCompButton { "Wet Comp" },
                        msButton { "" },               // Bass Mono enable — embedded (LED only) on the X-Over knob
                        bypassButton { "Bypass" };
@@ -113,7 +113,7 @@ private:
     std::unique_ptr<SliderAttachment> dryAtt, wetAtt, irGainAtt, outputAtt, toneAtt, inHPAtt, inLPAtt,
                                       preDelayAtt, widthAtt, msBassAtt,
                                       duckAtt, duckRelAtt, fadeInAtt, decayAtt, taperAtt, stretchAtt, dampAtt;
-    std::unique_ptr<ButtonAttachment> reverseAtt, rawLevelAtt, filterIRAtt, clipGuardAtt, wetCompAtt, msAtt, bypassAtt;
+    std::unique_ptr<ButtonAttachment> reverseAtt, irNormAtt, filterIRAtt, clipGuardAtt, wetCompAtt, msAtt, bypassAtt;
 
     // meters: shown values + slower-decaying peak-hold lines, with last-painted
     // copies so the timer can skip repaints when nothing moved

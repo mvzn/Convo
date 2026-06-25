@@ -180,8 +180,8 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
 
     // 5b. damping: progressive HF rolloff over the tail (air absorption). Crossfade the kernel
     //     toward a first-order low-passed copy, the blend ramping 0 (onset) -> 1 (tail end), with
-    //     the cutoff falling as Damp rises. Placed before auto-level so loudness stays normalised
-    //     as Damp changes (only the spectral balance shifts). 0 = off (skipped).
+    //     the cutoff falling as Damp rises. Placed before auto-level so that, when Norm IR is on,
+    //     loudness stays put as Damp changes (only the spectral balance shifts). 0 = off (skipped).
     if (bp.dampAmt > 0.001f)
     {
         const float  amt = juce::jlimit (0.0f, 1.0f, bp.dampAmt);

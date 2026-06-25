@@ -66,10 +66,10 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     wetCompButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);
     msButton.setColour        (juce::ToggleButton::tickColourId, ConvoColours::mint);
     filterIRButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::mint);
-    rawLevelButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);  // copper = "careful"
+    irNormButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::mint);
     bypassButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::copper);
-    rawLevelButton.setTooltip ("Use the IR's recorded level unscaled "
-                               "(audio can convolve 30..45 dB hot)");
+    irNormButton.setTooltip   ("Normalize the IR to unit energy. Off (default) = the IR's raw "
+                               "recorded level, which can convolve hot on dense material");
     wetCompButton.setTooltip  ("Adaptive wet gain compensation: tracks the dry input level "
                                "and trims the wet to match; frozen while the input is quiet "
                                "so tails ring out");
@@ -118,7 +118,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     loadButton.setTooltip      ("Load an impulse response (.wav / .aif / .aiff / .ogg / .flac). "
                                 "You can also drag a file onto the display");
 
-    for (auto* b : { &reverseButton, &rawLevelButton, &filterIRButton, &clipGuardButton,
+    for (auto* b : { &reverseButton, &irNormButton, &filterIRButton, &clipGuardButton,
                      &wetCompButton, &msButton, &bypassButton })
     {
         b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
@@ -143,7 +143,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     stretchAtt  = std::make_unique<SliderAttachment> (apvts, "stretch",     stretchSlider);
     dampAtt     = std::make_unique<SliderAttachment> (apvts, "damp",        dampSlider);
     reverseAtt   = std::make_unique<ButtonAttachment> (apvts, "reverse",   reverseButton);
-    rawLevelAtt  = std::make_unique<ButtonAttachment> (apvts, "irRaw",     rawLevelButton);
+    irNormAtt    = std::make_unique<ButtonAttachment> (apvts, "irNorm",    irNormButton);
     filterIRAtt  = std::make_unique<ButtonAttachment> (apvts, "filterIR",  filterIRButton);
     clipGuardAtt = std::make_unique<ButtonAttachment> (apvts, "clipGuard", clipGuardButton);
     wetCompAtt   = std::make_unique<ButtonAttachment> (apvts, "wetComp",   wetCompButton);
@@ -898,24 +898,24 @@ void ConvoAudioProcessorEditor::resized()
 
     area.removeFromTop (10);
     auto row1 = area.removeFromTop (170);
-    // FILTER (In HP / In LP) | POST (Bass Mono / Tone / Width / Pre-Delay) | VOLUME (Dry / Wet /
-    // Output). POST + VOLUME share one 7-column grid so the IR SHAPE row lines up under them;
-    // FILTER is its own 2-knob group on the left (DUCKING below it shares its width).
+    // Top row: FILTER (In HP / In LP) | IR SHAPE (4 knobs) | IR CHARACTER (Stretch / Damp +
+    // toggles). FILTER is its own 2-knob group on the left (DUCKING below it shares its width);
+    // IR SHAPE + IR CHARACTER split the rest 4 + 3, lining up with POST | VOLUME on the row below.
     filterPanel = row1.removeFromLeft (juce::roundToInt ((row1.getWidth() - 10) * 2.0f / 9.0f));
     row1.removeFromLeft (10);
-    auto postArea = row1;                       // POST + VOLUME split this span (4 + 3 knobs)
+    auto postArea = row1;                       // IR SHAPE + IR CHARACTER split this span (4 + 3)
     area.removeFromTop (10);
     auto row2 = area.removeFromTop (170);
     duckPanel = row2.removeFromLeft (filterPanel.getWidth());   // DUCKING sits under FILTER
     row2.removeFromLeft (10);
-    // IR SHAPE (4 knobs, under POST) | IR CHARACTER (Stretch, Damp + toggles, under VOLUME). Split
-    // identically to row 1's POST|VOLUME (4 + 3 slots) so every knob lines up across the two rows.
+    // Bottom row post-area: POST (4 knobs) | VOLUME (3 knobs), split 4 + 3 (same as IR SHAPE | IR
+    // CHARACTER above, so every column lines up across the two rows).
     {
         const int gap    = 10;
         const int usable = row2.getWidth() - gap;
-        const int charW  = juce::roundToInt ((3.0f * (float) usable + 20.0f) / 7.0f);   // == VOLUME split
-        shapePanel = row2.withWidth (usable - charW);
-        charPanel  = row2.withTrimmedLeft ((usable - charW) + gap);
+        const int volW   = juce::roundToInt ((3.0f * (float) usable + 20.0f) / 7.0f);
+        postPanel   = row2.withWidth (usable - volW);
+        volumePanel = row2.withTrimmedLeft ((usable - volW) + gap);
     }
 
     auto placeKnob = [] (juce::Rectangle<int> cell, juce::Slider& s, juce::Label& l)
@@ -931,19 +931,17 @@ void ConvoAudioProcessorEditor::resized()
         return r;
     };
 
-    // POST (4 knobs) | VOLUME (3 knobs): split the post-area into two panels with a 10 px gap,
-    // each getting its OWN column grid (sized so POST's 4 cells and VOLUME's 3 cells are equal
-    // width). A single shared grid sliced down the middle crams the knobs either side of the
-    // split against their borders; per-panel grids give every first/last knob the same margin.
+    // Top row post-area: IR SHAPE (4 knobs) | IR CHARACTER (3 slots), split 4 + 3 (equal cell
+    // widths, same split as POST | VOLUME below so every column lines up across the two rows).
     {
         const int gap    = 10;
         const int usable = postArea.getWidth() - gap;
-        const int volW   = juce::roundToInt ((3.0f * (float) usable + 20.0f) / 7.0f);   // -> cwP == cwV
-        postPanel   = postArea.withWidth (usable - volW);
-        volumePanel = postArea.withTrimmedLeft ((usable - volW) + gap);
+        const int charW  = juce::roundToInt ((3.0f * (float) usable + 20.0f) / 7.0f);
+        shapePanel  = postArea.withWidth (usable - charW);
+        charPanel   = postArea.withTrimmedLeft ((usable - charW) + gap);
     }
-    auto postKA = knobArea (postPanel);     // 4-column grid
-    auto volKA  = knobArea (volumePanel);   // 3-column grid
+    auto postKA = knobArea (postPanel);     // 4-column grid (POST + IR SHAPE share these columns)
+    auto volKA  = knobArea (volumePanel);   // 3-column grid (VOLUME + IR CHARACTER)
     const int cwP = postKA.getWidth() / 4;
     const int cwV = volKA.getWidth()  / 3;
     // place at a POST / VOLUME column, taking the given row's y so the IR SHAPE row lines up
@@ -995,7 +993,7 @@ void ConvoAudioProcessorEditor::resized()
                                              togRight - togLeft, colH);
         reverseButton.setBounds  (toggles.removeFromTop (btnH));
         toggles.removeFromTop (gap);
-        rawLevelButton.setBounds (toggles.removeFromTop (btnH));
+        irNormButton.setBounds (toggles.removeFromTop (btnH));
         toggles.removeFromTop (gap);
         filterIRButton.setBounds (toggles.removeFromTop (btnH));
     }

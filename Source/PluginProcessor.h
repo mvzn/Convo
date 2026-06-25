@@ -105,7 +105,7 @@ private:
     std::atomic<float>* stretchParam  = nullptr;
     std::atomic<float>* dampParam     = nullptr;
     std::atomic<float>* reverseParam  = nullptr;
-    std::atomic<float>* rawLevelParam = nullptr;
+    std::atomic<float>* irNormParam   = nullptr;
     std::atomic<float>* clipGuardParam = nullptr;
     std::atomic<float>* wetCompParam  = nullptr;
     std::atomic<float>* bypassParam   = nullptr;
