@@ -656,11 +656,11 @@ void test_bass_mono()
     auto runStage = [&] (juce::AudioBuffer<float>& buf)
     {
         const int len = buf.getNumSamples();
-        // first-order (6 dB/oct) high-pass on the side, matching the processor's cleanest-phase split
+        // 2nd-order (Q=0.5, 12 dB/oct) high-pass on the side, matching the processor's split
         juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
                                        juce::dsp::IIR::Coefficients<float>> hp;
         hp.prepare ({ sr, (juce::uint32) len, 1 });
-        *hp.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (sr, fc);
+        *hp.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (sr, fc, 0.5f);
         hp.reset();
         convo::msEncode (buf.getWritePointer (0), buf.getWritePointer (1), len);
         juce::dsp::AudioBlock<float> blk (buf);
@@ -732,14 +732,6 @@ void test_bass_mono()
             sIn += a * a; sOut += b * b;
         }
         expectTrue (sOut < 0.1 * sIn, "well below crossover: the side is stripped toward mono");
-    }
-
-    // D) a mono IR bakes to a mono kernel, so the processor gates Bass Mono off and the IR
-    //    is processed exactly like the feature off (the mono IR convolves both channels).
-    {
-        juce::AudioBuffer<float> mono (1, 64); mono.clear(); mono.setSample (0, 0, 1.0f);
-        auto km = ConvolutionEngine::bake (mono, kFs, plainBake());
-        expectTrue (km.getNumChannels() == 1, "mono IR -> mono kernel (Bass Mono is gated off)");
     }
 }
 

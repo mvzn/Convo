@@ -514,9 +514,8 @@ void ConvoAudioProcessorEditor::renderOverlay()
         else        eqCurvePath.lineTo (x, y);
     }
 
-    // bass-mono crossover marker — only when the feature is on AND the kernel is stereo (a
-    // mono IR makes Bass Mono a no-op, so don't imply a crossover is acting)
-    if (apvts.getRawParameterValue ("ms")->load() > 0.5f && processor.getKernelStereo())
+    // bass-mono crossover marker — shown whenever the feature is on
+    if (apvts.getRawParameterValue ("ms")->load() > 0.5f)
     {
         const float bass = apvts.getRawParameterValue ("msBass")->load();
         if (bass > 21.0f)
@@ -745,19 +744,10 @@ void ConvoAudioProcessorEditor::updateKnobStates()
 {
     auto& a = processor.getAPVTS();
 
-    // Bass Mono needs a stereo IR. With a mono IR don't allow the mode at all: disable the
-    // embedded enable LED (reverts to the original processing) and dim it; the knob is dimmed
-    // whenever the mode is off or unavailable. The LED stays bright while merely off (stereo
-    // IR) so it reads as the "turn me on" affordance sitting on the knob.
-    const bool stereoIR = processor.getKernelStereo();
-    if (msButton.isEnabled() != stereoIR)
-        msButton.setEnabled (stereoIR);
-    const float ledA = stereoIR ? 1.0f : 0.45f;
-    if (! juce::approximatelyEqual (msButton.getAlpha(), ledA))
-        msButton.setAlpha (ledA);
-
+    // Bass Mono works on any IR (the wet's stereo comes from the input), so it's always
+    // available — just dim its X-Over knob while the mode is off (its only no-op state).
     const bool msOn = a.getRawParameterValue ("ms")->load() > 0.5f;
-    const float t = (msOn && stereoIR) ? 1.0f : 0.45f;
+    const float t = msOn ? 1.0f : 0.45f;
     if (! juce::approximatelyEqual (msBassSlider.getAlpha(), t))
     {
         msBassSlider.setAlpha (t);

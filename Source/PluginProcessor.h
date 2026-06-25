@@ -69,7 +69,6 @@ public:
     const juce::AudioBuffer<float>& getBakedIR() const noexcept { return bakedIR; }
     double getBakedIRSampleRate() const noexcept { return bakedIRSampleRate; }
     const juce::AudioBuffer<float>& getKernelIR() const noexcept { return audioBakeScratch; }  // trimmed+shaped kernel (the selection layer)
-    bool getKernelStereo() const noexcept { return kernelStereo.load(); }  // Bass Mono is offered only for a stereo IR
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static constexpr float kDecayOffMs = 10000.0f;   // top of the Decay range == "Off"
@@ -116,9 +115,9 @@ private:
                                                       juce::dsp::IIR::Coefficients<float>>;
     Duplicator lowShelf, highShelf;                  // tilt tone
     Duplicator inputHP, inputLP;                     // pre-IR input filter (first-order, 6 dB/oct)
-    Duplicator sideHP;                               // bass-mono: first-order (6 dB/oct) side high-pass
-                                                     // post-convolution — gentlest, cleanest phase (the mid
-                                                     // stays unfiltered, so center content is phase-flat)
+    Duplicator sideHP;                               // bass-mono: 2nd-order (Q=0.5, 12 dB/oct) side high-pass
+                                                     // post-convolution. Mid stays unfiltered, so center
+                                                     // content is phase-flat; Q=0.5 keeps the side phase clean
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::Linear> preDelayLine { 1 };
     juce::dsp::DelayLine<float, juce::dsp::DelayLineInterpolationTypes::None>   dryDelayLine  { 1 };
 
@@ -150,8 +149,6 @@ private:
     std::atomic<float> outputLevel { 0.0f };
     std::atomic<float> tailSeconds { 0.0f };         // baked IR length + max pre-delay
     std::atomic<bool>  filterInput { true };         // runtime input filter on iff the kernel is unfiltered
-    std::atomic<bool>  kernelStereo { false };       // live kernel has 2 channels (gates Bass Mono: a
-                                                     // mono IR is processed exactly like the feature off)
 
     // setStateInformation may run off the message thread (Cubase project load);
     // it only stashes the path here and the timer performs the actual load.
