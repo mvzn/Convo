@@ -105,7 +105,6 @@ private:
     std::atomic<float>* dampParam     = nullptr;
     std::atomic<float>* reverseParam  = nullptr;
     std::atomic<float>* irNormParam   = nullptr;
-    std::atomic<float>* clipGuardParam = nullptr;
     std::atomic<float>* wetCompParam  = nullptr;
     std::atomic<float>* bypassParam   = nullptr;
     juce::AudioProcessorParameter* bypassParameter = nullptr;
@@ -127,8 +126,7 @@ private:
                                wetCompSm,            // adaptive wet gain compensation (dry-referenced)
                                inHPSm, inLPSm,       // pre-IR filter cutoffs (smoothed, per-block coeff rebuild)
                                msBassSm,             // bass-mono crossover cutoff (smoothed)
-                               preDelaySm,           // pre-delay length in samples (per-sample setDelay so modulation glides)
-                               clipGuardSm;          // 0..1 blend so toggling the clip guard is click-free
+                               preDelaySm;           // pre-delay length in samples (per-sample setDelay so modulation glides)
 
     double currentSampleRate = 48000.0;
     int    maxPreDelaySamples = 1;

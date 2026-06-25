@@ -62,7 +62,6 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setup (dampSlider,     dampLabel,     "Damp");
 
     reverseButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);    // green = active
-    clipGuardButton.setColour (juce::ToggleButton::tickColourId, ConvoColours::mint);
     wetCompButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);
     msButton.setColour        (juce::ToggleButton::tickColourId, ConvoColours::mint);
     filterIRButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::mint);
@@ -112,13 +111,11 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
                               "(air absorption) \xe2\x80\x94 the reverb gets darker as it decays. 0% = off");
 
     // --- output guards / global ---
-    clipGuardButton.setTooltip ("Soft-clip ceiling on the final output: transparent below -2.5 dBFS, "
-                                "catches overs. Defeatable");
     bypassButton.setTooltip    ("Passes the dry input through at unity");
     loadButton.setTooltip      ("Load an impulse response (.wav / .aif / .aiff / .ogg / .flac). "
                                 "You can also drag a file onto the display");
 
-    for (auto* b : { &reverseButton, &irNormButton, &filterIRButton, &clipGuardButton,
+    for (auto* b : { &reverseButton, &irNormButton, &filterIRButton,
                      &wetCompButton, &msButton, &bypassButton })
     {
         b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
@@ -145,7 +142,6 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     reverseAtt   = std::make_unique<ButtonAttachment> (apvts, "reverse",   reverseButton);
     irNormAtt    = std::make_unique<ButtonAttachment> (apvts, "irNorm",    irNormButton);
     filterIRAtt  = std::make_unique<ButtonAttachment> (apvts, "filterIR",  filterIRButton);
-    clipGuardAtt = std::make_unique<ButtonAttachment> (apvts, "clipGuard", clipGuardButton);
     wetCompAtt   = std::make_unique<ButtonAttachment> (apvts, "wetComp",   wetCompButton);
     msAtt        = std::make_unique<ButtonAttachment> (apvts, "ms",        msButton);
     bypassAtt    = std::make_unique<ButtonAttachment> (apvts, "bypass",    bypassButton);
@@ -844,8 +840,6 @@ void ConvoAudioProcessorEditor::resized()
     headerZone = area.removeFromTop (42);
     bypassButton.setBounds (headerZone.removeFromRight (92).withSizeKeepingCentre (92, 26));
     headerZone.removeFromRight (8);
-    clipGuardButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
-    headerZone.removeFromRight (8);
     wetCompButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
     area.removeFromTop (15);   // 12 px of clear space below the header rule -> matches the graph<->PRE/POST gap
 
@@ -944,10 +938,10 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (row.removeFromLeft (cellW), inHPSlider, inHPLabel);
         placeKnob (row.removeFromLeft (cellW), inLPSlider, inLPLabel);
     }
-    {   // POST in signal-flow order (Pre-Delay/Tone/Bass Mono/Width)
-        placeKnob (pcolP (0, postKA), preDelaySlider, preDelayLabel);
-        placeKnob (pcolP (1, postKA), toneSlider,     toneLabel);
-        placeKnob (pcolP (2, postKA), msBassSlider,   msBassLabel);   // Bass Mono
+    {   // POST: Bass Mono / Pre-Delay / Tone / Width
+        placeKnob (pcolP (0, postKA), msBassSlider,   msBassLabel);   // Bass Mono
+        placeKnob (pcolP (1, postKA), preDelaySlider, preDelayLabel);
+        placeKnob (pcolP (2, postKA), toneSlider,     toneLabel);
         placeKnob (pcolP (3, postKA), widthSlider,    widthLabel);
         // Bass Mono enable: a small square LED toggle sitting just under its knob
         auto kb = msBassSlider.getBounds();
@@ -966,9 +960,9 @@ void ConvoAudioProcessorEditor::resized()
     }
     {   // IR SHAPE — IR Gain / Fade / Decay / Taper, aligned under POST
         auto row = knobArea (shapePanel);
-        placeKnob (pcolP (0, row), irGainSlider, irGainLabel);   // under Pre-Delay
-        placeKnob (pcolP (1, row), fadeInSlider, fadeInLabel);   // under Tone
-        placeKnob (pcolP (2, row), decaySlider,  decayLabel);    // under Bass Mono
+        placeKnob (pcolP (0, row), irGainSlider, irGainLabel);   // under Bass Mono
+        placeKnob (pcolP (1, row), fadeInSlider, fadeInLabel);   // under Pre-Delay
+        placeKnob (pcolP (2, row), decaySlider,  decayLabel);    // under Tone
         placeKnob (pcolP (3, row), taperSlider,  taperLabel);    // under Width
     }
     {   // IR CHARACTER — Stretch, Damp + the toggle column, aligned under VOLUME
