@@ -125,12 +125,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
         ParameterID { "fadeIn", 1 }, "Fade In",
         NormalisableRange<float> (0.0f, 10000.0f, 1.0f, 0.35f), 0.0f, "ms"));
 
+    // Decay is an amount relative to the baked (trimmed/stretched) length: 0 % = Off (tail as
+    // recorded), turning it up shortens the tail starting from that length. See currentBakeParams.
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "decay", 1 }, "Decay",
-        NormalisableRange<float> (50.0f, kDecayOffMs, 1.0f, 0.3f), kDecayOffMs, "ms",
+        NormalisableRange<float> (0.0f, 100.0f, 0.1f), 0.0f, "%",
         AudioProcessorParameter::genericParameter,
-        [] (float v, int) { return v >= ConvoAudioProcessor::kDecayOffMs - 0.5f
-                                       ? juce::String ("Off") : juce::String (v, 0) + " ms"; }));
+        [] (float v, int) { return v < 0.5f ? juce::String ("Off") : juce::String (v, 0) + " %"; }));
 
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "taper", 1 }, "Taper",
@@ -623,9 +624,11 @@ IRBakeParams ConvoAudioProcessor::currentBakeParams() const
     p.startFrac    = irStartParam->load();
     p.endFrac      = irEndParam->load();
     p.fadeInMs     = fadeInParam->load();
-    const float dec = decayParam->load();
-    p.decayOff     = dec >= kDecayOffMs - 0.5f;
-    p.decaySeconds = dec * 0.001f;
+    const float dec = decayParam->load();            // 0..100 %, 0 = Off
+    p.decayOff      = dec < 0.5f;
+    // map the amount to the -60 dB point as a fraction of the baked length: 0 % -> 1.0 (full
+    // length, just engaging), 100 % -> kDecayMinFrac (shortest tail). bake() scales this by len.
+    p.decayFraction = 1.0f - (dec * 0.01f) * (1.0f - kDecayMinFrac);
     p.taperMs      = taperParam->load();
     p.stretch      = stretchParam->load() * 0.01f;   // % -> factor
     p.dampAmt      = dampParam->load() * 0.01f;      // % -> 0..1

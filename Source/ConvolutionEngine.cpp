@@ -139,14 +139,15 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
             out.getWritePointer (ch)[i] *= g;
     }
 
-    // 3. decay: impose exp decay (-60 dB at decaySamps) from the end of fade-in, and
-    //    truncate where it crosses -60 dB to save CPU. decayOff => tail as recorded.
-    //    The envelope is accumulated incrementally (g *= step) instead of a pow() per
-    //    sample — identical math, orders of magnitude cheaper on long IRs.
+    // 3. decay: impose exp decay (-60 dB at decaySamps) from the end of fade-in, and truncate
+    //    where it crosses -60 dB to save CPU. decayOff => tail as recorded. The -60 dB point is
+    //    a fraction of the *baked* length (post trim + stretch), so the decay always starts from
+    //    the set length and shortens from there — no dead zone. The envelope is accumulated
+    //    incrementally (g *= step) instead of a pow() per sample — identical math, far cheaper.
     int lEff = len;
-    if (! bp.decayOff && bp.decaySeconds > 0.0f)
+    if (! bp.decayOff && bp.decayFraction < 1.0f)
     {
-        const double decaySamps = juce::jmax (1.0, (double) bp.decaySeconds * irSampleRate);
+        const double decaySamps = juce::jmax (1.0, (double) bp.decayFraction * (double) len);
         const double step       = std::pow (10.0, -3.0 / decaySamps);   // per-sample ratio
         double g = 1.0;                                                 // 10^(-3*0/decaySamps)
         lEff = fadeInSamps;

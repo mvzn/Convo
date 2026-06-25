@@ -72,7 +72,7 @@ public:
     const juce::AudioBuffer<float>& getKernelIR() const noexcept { return audioBakeScratch; }  // trimmed+shaped kernel (the selection layer)
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
-    static constexpr float kDecayOffMs = 10000.0f;   // top of the Decay range == "Off"
+    static constexpr float kDecayMinFrac = 0.04f;   // shortest tail at Decay = 100% (fraction of the baked length)
 
 private:
     void timerCallback() override;                   // message thread: applies pending IR re-bakes

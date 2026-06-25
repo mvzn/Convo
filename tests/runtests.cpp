@@ -37,7 +37,7 @@ void expectTrue (bool cond, const char* label)
 IRBakeParams plainBake()   // no shaping: identity windowing (raw level, so the
 {                          // analytic envelope tests see unscaled samples)
     IRBakeParams bp;
-    bp.fadeInMs = 0.0f; bp.decayOff = true; bp.decaySeconds = 0.0f;
+    bp.fadeInMs = 0.0f; bp.decayOff = true; bp.decayFraction = 1.0f;
     bp.taperMs = 0.0f;  bp.reverse = false; bp.autoLevel = false;
     return bp;
 }
@@ -146,10 +146,10 @@ void test_bake_decay_envelope()
 {
     std::printf ("\n== bake: decay envelope ==\n");
     auto raw = dcBuffer (12000, 1.0f);
-    auto bp  = plainBake(); bp.decayOff = false; bp.decaySeconds = 0.1f;  // decaySamps = 4800
+    auto bp  = plainBake(); bp.decayOff = false; bp.decayFraction = 0.4f;  // decaySamps = 0.4 * 12000 = 4800
 
     auto out = ConvolutionEngine::bake (raw, kFs, bp);
-    const double decaySamps = 0.1 * kFs;
+    const double decaySamps = 0.4 * 12000;   // -60 dB point = decayFraction * baked length
     const int    half = (int) (decaySamps * 0.5);   // 2400 -> -30 dB
 
     const double dbHalf = juce::Decibels::gainToDecibels ((double) out.getSample (0, half));
@@ -165,7 +165,7 @@ void test_bake_decay_truncation()
 {
     std::printf ("\n== bake: decay truncation ==\n");
     auto raw = dcBuffer (20000, 1.0f);
-    auto bp  = plainBake(); bp.decayOff = false; bp.decaySeconds = 0.1f;  // -60 dB at t = 4800
+    auto bp  = plainBake(); bp.decayOff = false; bp.decayFraction = 0.24f;  // -60 dB at 0.24 * 20000 = 4800
 
     auto out = ConvolutionEngine::bake (raw, kFs, bp);
     // because: truncate at first t where 10^(-3t/4800) < 0.001  => t > 4800.

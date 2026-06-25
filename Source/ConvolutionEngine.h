@@ -12,7 +12,9 @@ struct IRBakeParams
     float startFrac = 0.0f;    // trim the head: keep the IR from this fraction (0..1) of its length
     float endFrac = 1.0f;      // trim the tail: keep the IR up to this fraction (0..1) of its length
     float fadeInMs = 0.0f;     // raised-cosine onset ramp
-    float decaySeconds = 0.0f; // exponential tail decay (RT60-ish); ignored if decayOff
+    float decayFraction = 1.0f; // exponential tail decay: the -60 dB point as a fraction (0..1) of the
+                                // post-trim/stretch length, so decay always starts from the baked length.
+                                // 1.0 = no truncation; smaller = shorter tail. Ignored if decayOff
     bool  decayOff = true;     // true => use the IR's recorded decay unchanged
     float taperMs = 10.0f;     // raised-cosine de-click ramp at the (truncated) end
     bool  reverse = false;     // reverse the IR before windowing
@@ -34,7 +36,7 @@ struct IRBakeParams
             && juce::approximatelyEqual (endFrac, o.endFrac)
             && juce::approximatelyEqual (fadeInMs, o.fadeInMs)
             && juce::approximatelyEqual (stretch, o.stretch)
-            && juce::approximatelyEqual (decaySeconds, o.decaySeconds)
+            && juce::approximatelyEqual (decayFraction, o.decayFraction)
             && decayOff == o.decayOff
             && juce::approximatelyEqual (taperMs, o.taperMs)
             && juce::approximatelyEqual (dampAmt, o.dampAmt)

@@ -101,8 +101,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     // --- IR bake controls ---
     reverseButton.setTooltip ("Reverse the impulse response before shaping (classic reverse reverb)");
-    decaySlider.setTooltip   ("Imposes an exponential decay on the IR (-60 dB at this time) and truncates "
-                              "the tail. Fully clockwise = Off (tail as recorded)");
+    decaySlider.setTooltip   ("Imposes an exponential decay on the IR and truncates the tail, relative to the "
+                              "baked (trimmed) length: 0% = Off (tail as recorded), turn up to shorten the tail");
     taperSlider.setTooltip   ("Raised-cosine fade-out baked onto the IR's tail to de-click the kernel end");
     stretchSlider.setTooltip ("Time-stretch the IR (resampled in the bake): below 100% shortens it, "
                               "above 100% lengthens it. 100% = off");
