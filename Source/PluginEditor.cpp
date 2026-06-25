@@ -802,7 +802,12 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
             {
                 g.setColour (ConvoColours::textDim);
                 g.setFont (juce::Font (juce::FontOptions (11.5f)));
-                g.drawText (bakedLenText, waveZone.reduced (6, 4), juce::Justification::bottomRight);
+                // sit on the frequency-label row from drawFilterOverlay (top = bottom - 2.5, h = 11),
+                // so the length readout lines up with the filter-graph frequencies along the bottom
+                g.drawText (bakedLenText,
+                            juce::Rectangle<float> ((float) waveZone.getX(), (float) waveZone.getBottom() - 2.5f,
+                                                    (float) waveZone.getWidth() - 6.0f, 10.0f),
+                            juce::Justification::centredRight);
             }
 
             drawFilterOverlay (g);   // EQ curve (tone + pre-IR HP/LP) + bass-mono marker
