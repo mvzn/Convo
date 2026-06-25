@@ -108,6 +108,23 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
         g.strokePath (value, PathStrokeType (lineW, PathStrokeType::curved, PathStrokeType::rounded));
     }
 
+    // --- live gain-reduction probe (Duck knob): a thin mint arc in the gap just inside the
+    //     value track. It hangs off the set-duck position and recedes toward the start as the
+    //     wet is pulled down (full reduction sweeps the whole value arc). The "gr" property is
+    //     set per-frame by the editor's timer; absent (-> 0) on every other knob, a no-op there. ---
+    const float gr = (float) slider.getProperties().getWithDefault ("gr", 0.0);
+    if (gr > 0.001f)
+    {
+        const float grR   = arcR - lineW * 0.95f;   // dedicated ring between the value arc and the bezel
+        const float grEnd = rotaryStartAngle + jmax (0.0f, sliderPos - gr) * (rotaryEndAngle - rotaryStartAngle);
+        Path grArc;
+        grArc.addCentredArc (centre.x, centre.y, grR, grR, 0.0f, grEnd, angle, true);   // grEnd..set-point
+        g.setColour (ConvoColours::mint.withAlpha (0.22f));   // soft glow underlay
+        g.strokePath (grArc, PathStrokeType (lineW * 1.1f, PathStrokeType::curved, PathStrokeType::rounded));
+        g.setColour (ConvoColours::mint);
+        g.strokePath (grArc, PathStrokeType (lineW * 0.5f, PathStrokeType::curved, PathStrokeType::rounded));
+    }
+
     // --- LED indicator dot on the rotating cap, near its outer edge (glows like the arc) ---
     const Point<float> dir (std::cos (angle - MathConstants<float>::halfPi),
                             std::sin (angle - MathConstants<float>::halfPi));
@@ -124,7 +141,7 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
 }
 
 void ConvoLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& button,
-                                         bool shouldDrawButtonAsHighlighted, bool)
+                                         bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
     using namespace juce;
 
@@ -133,20 +150,74 @@ void ConvoLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& 
     if (onColour == Colour())               // fall back if no per-button colour set
         onColour = ConvoColours::mint;
 
-    auto b      = button.getLocalBounds().toFloat();
-    auto ledCol = b.removeFromRight (juce::jmin (b.getHeight(), 22.0f));               // LED column, right of the label
-    auto led    = ledCol.withSizeKeepingCentre (ledCol.getWidth() - 6.0f, ledCol.getWidth() - 6.0f);   // keep it SQUARE
-
-    if (on)   // soft glow
+    // --- indicator mode: a bare LED light, no key. Driven externally (read-only) — used for the
+    //     Bass Mono "engaged" lamp. Lit + glowing when on, a dim recessed dot when off. ---
+    if (button.getProperties().getWithDefault ("indicator", false))
     {
-        g.setColour (onColour.withAlpha (0.25f));
-        g.fillRoundedRectangle (led.expanded (2.5f), 5.0f);
+        auto r    = button.getLocalBounds().toFloat();
+        const float dotR = jmin (r.getWidth(), r.getHeight()) * 0.30f;   // leave room for the glow halo
+        auto dot  = Rectangle<float> (dotR * 2.0f, dotR * 2.0f).withCentre (r.getCentre());
+        if (on)
+        {
+            g.setColour (onColour.withAlpha (0.22f)); g.fillEllipse (dot.expanded (dotR * 0.6f));
+            g.setColour (onColour.withAlpha (0.45f)); g.fillEllipse (dot.expanded (dotR * 0.28f));
+            g.setColour (onColour);                   g.fillEllipse (dot);
+            g.setColour (Colours::white.withAlpha (0.7f));
+            g.fillEllipse (dot.withSizeKeepingCentre (dotR * 0.7f, dotR * 0.7f).translated (0.0f, -dotR * 0.15f));
+        }
+        else
+        {
+            g.setColour (ConvoColours::knobBody.darker (0.3f)); g.fillEllipse (dot);
+            g.setColour (ConvoColours::border);                 g.drawEllipse (dot, 1.0f);
+        }
+        return;
     }
 
-    g.setColour (on ? onColour : ConvoColours::knobBody);
-    g.fillRoundedRectangle (led, 3.0f);
+    // --- the original small square LED chip on the right, label on the left. Depth is carried by
+    //     shadows: off = raised (a soft layered drop shadow), on = lit and pressed in (inner shadow). ---
+    auto b      = button.getLocalBounds().toFloat();
+    auto ledCol = b.removeFromRight (jmin (b.getHeight(), 22.0f));               // LED column, right of the label
+    auto led    = ledCol.withSizeKeepingCentre (ledCol.getWidth() - 6.0f, ledCol.getWidth() - 6.0f);   // keep it SQUARE
+    const float rad = 3.0f;
+    const bool  pushedIn = on || shouldDrawButtonAsDown;
+
+    if (! pushedIn)   // raised: soft layered drop shadow grounds the chip
+    {
+        for (int i = 3; i >= 1; --i)
+        {
+            g.setColour (Colours::black.withAlpha (0.22f));
+            g.fillRoundedRectangle (led.translated (0.0f, (float) i * 0.9f).expanded ((float) i * 0.5f, (float) i * 0.2f), rad + 1.0f);
+        }
+    }
+
+    if (on)   // glow halo around the lit chip
+    {
+        g.setColour (onColour.withAlpha (0.30f));
+        g.fillRoundedRectangle (led.expanded (3.0f), 6.0f);
+    }
+
+    g.setColour (on ? onColour : ConvoColours::knobBody.darker (0.2f));
+    g.fillRoundedRectangle (led, rad);
+
+    if (pushedIn)   // pressed in: inner shadow down from the top edge -> recessed
+    {
+        Graphics::ScopedSaveState s (g);
+        Path clip; clip.addRoundedRectangle (led, rad);
+        g.reduceClipRegion (clip);
+        g.setGradientFill (ColourGradient (Colours::black.withAlpha (on ? 0.30f : 0.58f),
+                                           led.getCentreX(), led.getY() - 1.0f,
+                                           Colours::transparentBlack,
+                                           led.getCentreX(), led.getY() + led.getHeight() * 0.7f, false));
+        g.fillRect (led);
+    }
+    else            // raised: faint top highlight (domed chip)
+    {
+        g.setColour (Colours::white.withAlpha (0.12f));
+        g.drawLine (led.getX() + 1.5f, led.getY() + 1.0f, led.getRight() - 1.5f, led.getY() + 1.0f, 1.0f);
+    }
+
     g.setColour (on ? onColour.brighter (0.4f) : ConvoColours::border);
-    g.drawRoundedRectangle (led, 3.0f, 1.0f);
+    g.drawRoundedRectangle (led, rad, 1.0f);
 
     g.setColour (shouldDrawButtonAsHighlighted ? ConvoColours::text : ConvoColours::label);
     g.setFont (14.0f);

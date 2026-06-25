@@ -64,7 +64,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     reverseButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);    // green = active
     wetCompButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);
     msButton.setColour        (juce::ToggleButton::tickColourId, ConvoColours::mint);
-    filterIRButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::mint);
+    filterIRButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);   // orange = IR-baked filter
     irNormButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::mint);
     bypassButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::copper);
     irNormButton.setTooltip   ("Normalize the IR to unit energy. Off (default) = the IR's raw "
@@ -75,10 +75,9 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     inHPSlider.setTooltip ("Pre-IR high-pass (low cut), 6 dB/oct, on the signal feeding the IR");
     inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 6 dB/oct, on the signal feeding the IR");
     fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp is capped at 80% of the IR length");
-    msButton.setTooltip   ("Bass Mono on/off (the LED on the knob): fold the wet below the crossover "
-                           "to mono, keeping everything above it stereo. Stereo IRs only");
+    msButton.setTooltip   ("Bass Mono engaged indicator (lights when the crossover is above 20 Hz)");
     msBassSlider.setTooltip ("Bass Mono crossover: the wet collapses to mono below this frequency "
-                             "and stays stereo above it (6 dB/oct, cleanest phase). 20 Hz = off");
+                             "and stays stereo above it. 20 Hz = off; turn it up to engage Bass Mono");
     filterIRButton.setTooltip ("Apply the In HP/In LP filter to the IR (baked, shown in the "
                                "display) instead of the input. Same sound; IR mode is cheaper "
                                "at runtime but re-bakes when you move the cutoffs");
@@ -108,7 +107,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     stretchSlider.setTooltip ("Time-stretch the IR (resampled in the bake): below 100% shortens it, "
                               "above 100% lengthens it. 100% = off");
     dampSlider.setTooltip    ("Damping (baked): a progressive high-frequency rolloff over the tail "
-                              "(air absorption) \xe2\x80\x94 the reverb gets darker as it decays. 0% = off");
+                              "(air absorption): the reverb gets darker as it decays. 0% = off");
 
     // --- output guards / global ---
     bypassButton.setTooltip    ("Passes the dry input through at unity");
@@ -121,6 +120,11 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
         b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
         addAndMakeVisible (*b);
     }
+
+    // Bass Mono has no enable: the crossover knob engages it (off at 20 Hz). msButton is now a
+    // pure read-only indicator — it lights when the mode is actually engaged, driven by the timer.
+    msButton.getProperties().set ("indicator", true);
+    msButton.setInterceptsMouseClicks (false, false);
 
     dryAtt      = std::make_unique<SliderAttachment> (apvts, "dry",         drySlider);
     wetAtt      = std::make_unique<SliderAttachment> (apvts, "wet",         wetSlider);
@@ -143,7 +147,6 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     irNormAtt    = std::make_unique<ButtonAttachment> (apvts, "irNorm",    irNormButton);
     filterIRAtt  = std::make_unique<ButtonAttachment> (apvts, "filterIR",  filterIRButton);
     wetCompAtt   = std::make_unique<ButtonAttachment> (apvts, "wetComp",   wetCompButton);
-    msAtt        = std::make_unique<ButtonAttachment> (apvts, "ms",        msButton);
     bypassAtt    = std::make_unique<ButtonAttachment> (apvts, "bypass",    bypassButton);
 
     // show the unit on each knob's value box (dB / Hz / ms / %). The slider attachment points
@@ -510,11 +513,10 @@ void ConvoAudioProcessorEditor::renderOverlay()
         else        eqCurvePath.lineTo (x, y);
     }
 
-    // bass-mono crossover marker — shown whenever the feature is on
-    if (apvts.getRawParameterValue ("ms")->load() > 0.5f)
+    // bass-mono crossover marker — shown whenever the mode is engaged (crossover above 20 Hz)
     {
         const float bass = apvts.getRawParameterValue ("msBass")->load();
-        if (bass > 21.0f)
+        if (bass > 20.5f)
         {
             const double tt = std::log (bass / fLo) / std::log (fHi / fLo);
             monoMarkerX = zone.getX() + (float) juce::jlimit (0.0, 1.0, tt) * zone.getWidth();
@@ -741,21 +743,15 @@ void ConvoAudioProcessorEditor::updateKnobStates()
 {
     auto& a = processor.getAPVTS();
 
-    // Bass Mono works on any IR (the wet's stereo comes from the input), so it's always
-    // available — just dim its X-Over knob while the mode is off (its only no-op state).
-    const bool msOn = a.getRawParameterValue ("ms")->load() > 0.5f;
-    const float t = msOn ? 1.0f : 0.45f;
-    if (! juce::approximatelyEqual (msBassSlider.getAlpha(), t))
-    {
-        msBassSlider.setAlpha (t);
-        msBassLabel.setAlpha (t);
-    }
+    // Bass Mono engaged indicator: light msButton when the crossover sits above 20 Hz (the knob
+    // itself is the control now, so it's never dimmed). setToggleState repaints only on change.
+    msButton.setToggleState (a.getRawParameterValue ("msBass")->load() > 20.5f, juce::dontSendNotification);
 
     const bool onIR = a.getRawParameterValue ("filterIR")->load() > 0.5f;
     if (onIR != inFilterLabelsOnIR)
     {
         inFilterLabelsOnIR = onIR;
-        const auto col = onIR ? ConvoColours::mint : ConvoColours::label;
+        const auto col = onIR ? ConvoColours::copper : ConvoColours::label;   // match the Filter IR orange when baked
         inHPLabel.setText (onIR ? "IR HP" : "In HP", juce::dontSendNotification);
         inLPLabel.setText (onIR ? "IR LP" : "In LP", juce::dontSendNotification);
         inHPLabel.setColour (juce::Label::textColourId, col);
@@ -944,9 +940,9 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (pcolP (1, postKA), preDelaySlider, preDelayLabel);
         placeKnob (pcolP (2, postKA), toneSlider,     toneLabel);
         placeKnob (pcolP (3, postKA), widthSlider,    widthLabel);
-        // Bass Mono enable: a small square LED toggle sitting just under its knob
+        // Bass Mono "engaged" indicator: a small LED lamp sitting just under its knob (read-only)
         auto kb = msBassSlider.getBounds();
-        msButton.setBounds (juce::Rectangle<int> (18, 16).withCentre ({ kb.getCentreX(), kb.getCentreY() + 35 }));
+        msButton.setBounds (juce::Rectangle<int> (22, 18).withCentre ({ kb.getCentreX(), kb.getCentreY() + 35 }));
     }
     {   // VOLUME (Dry/Wet/Output)
         placeKnob (pcolV (0, volKA), drySlider,    dryLabel);
@@ -1036,6 +1032,7 @@ void ConvoAudioProcessorEditor::timerCallback()
     outMeter = processor.getOutputLevel();
     inPeak   = juce::jmax (inMeter,  inPeak  * 0.96f);   // peak line falls slower than the bar
     outPeak  = juce::jmax (outMeter, outPeak * 0.96f);
+    duckGR   = processor.getDuckGainReduction();
 
     const auto name = processor.getIRLibrary().getDisplayName();
     if (name != lastFileName)
@@ -1047,7 +1044,7 @@ void ConvoAudioProcessorEditor::timerCallback()
     if (processor.getBakeGeneration() != lastBakeGen)
         rebuildThumbnail();
 
-    updateKnobStates();   // dim the X-Over crossover while Bass Mono is off (its only no-op state)
+    updateKnobStates();   // light the Bass Mono indicator when engaged; relabel In/IR filters
 
     // the EQ overlay tracks tone + pre-IR HP/LP + bass-mono, which are not bake params,
     // so poll them and repaint the wave layer only when one actually moves
@@ -1056,12 +1053,10 @@ void ConvoAudioProcessorEditor::timerCallback()
     const float ovHp   = apvts.getRawParameterValue ("inHP")->load();
     const float ovLp   = apvts.getRawParameterValue ("inLP")->load();
     const float ovBass = apvts.getRawParameterValue ("msBass")->load();
-    const bool  ovMs   = apvts.getRawParameterValue ("ms")->load() > 0.5f;
     if (! juce::approximatelyEqual (ovTone, eqToneSeen) || ! juce::approximatelyEqual (ovHp, eqHpSeen)
-        || ! juce::approximatelyEqual (ovLp, eqLpSeen) || ! juce::approximatelyEqual (ovBass, eqBassSeen)
-        || ovMs != eqMsSeen)
+        || ! juce::approximatelyEqual (ovLp, eqLpSeen) || ! juce::approximatelyEqual (ovBass, eqBassSeen))
     {
-        eqToneSeen = ovTone; eqHpSeen = ovHp; eqLpSeen = ovLp; eqBassSeen = ovBass; eqMsSeen = ovMs;
+        eqToneSeen = ovTone; eqHpSeen = ovHp; eqLpSeen = ovLp; eqBassSeen = ovBass;
         renderOverlay();        // rebuild the cached curve once per change, not in paint
         repaint (dropZone);
     }
@@ -1100,6 +1095,13 @@ void ConvoAudioProcessorEditor::timerCallback()
     {
         outShown = outMeter; outPeakShown = outPeak;
         repaint (outMeterZone);
+    }
+    // ducking GR probe: hand the live reduction to the Duck knob's LookAndFeel and repaint only when it moves
+    if (moved (duckGR, duckGRShown))
+    {
+        duckGRShown = duckGR;
+        duckSlider.getProperties().set ("gr", duckGR);
+        duckSlider.repaint();
     }
 }
 

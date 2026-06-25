@@ -19,7 +19,6 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     inHPParam     = apvts.getRawParameterValue ("inHP");
     inLPParam     = apvts.getRawParameterValue ("inLP");
     filterIRParam = apvts.getRawParameterValue ("filterIR");
-    msParam       = apvts.getRawParameterValue ("ms");
     msBassParam   = apvts.getRawParameterValue ("msBass");
     preDelayParam = apvts.getRawParameterValue ("preDelay");
     widthParam    = apvts.getRawParameterValue ("width");
@@ -162,14 +161,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterBool> (
         ParameterID { "wetComp", 1 }, "Wet Comp", true));
 
-    // bass mono: collapse the wet below the crossover to mono, keep the rest stereo
-    // (a pure audio-thread stage — high-passes the side post-convolution, no re-bake).
-    // Param ID stays "ms" for session compatibility with earlier builds.
-    layout.add (std::make_unique<AudioParameterBool> (
-        ParameterID { "ms", 1 }, "Bass Mono", false));
-
-    // bass-mono crossover (Bass Mono only): the side is high-passed at this frequency, so
-    // content below it folds to the centre. 20 Hz = flat (off). ID stays "msBass".
+    // bass-mono crossover: the side is high-passed at this frequency, so content below it folds
+    // to the centre. 20 Hz = off; moving the knob up engages the mode (no separate enable param).
+    // It's a pure audio-thread stage (high-passes the side post-convolution, no re-bake). ID stays "msBass".
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "msBass", 1 }, "Bass Mono Freq",
         NormalisableRange<float> (20.0f, 500.0f, 1.0f, 0.35f), 20.0f, "Hz"));
@@ -220,8 +214,9 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     inputHP.reset();
     inputLP.reset();
 
-    // bass-mono side high-pass: first-order (6 dB/oct) — the cleanest phase (least rotation,
-    // exactly complementary). The mid is never filtered, so center content stays phase-flat.
+    // bass-mono side high-pass: 2nd-order (12 dB/oct, Q = 0.5 / critically damped) — steep
+    // enough to genuinely mono the deep bass while Q = 0.5 keeps the phase clean. The mid is
+    // never filtered, so center content stays phase-flat.
     sideHP.prepare (spec);
     *sideHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (sampleRate, msBassParam->load(), 0.5f);
     sideHP.reset();
@@ -481,12 +476,13 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     // already-high-passed side, can't re-widen it; Q = 0.5 keeps the phase clean for the order).
     // Above the crossover the M/S round-trip is sample-exact (identical to the feature off). Works
     // on any IR: the wet's stereo image comes from the input, so a mono IR collapses to mono too.
-    // 20 Hz crossover / feature off => skipped (bit-exact); the side filter resets on re-engage.
+    // Bass Mono engages purely from the crossover: 20 Hz = off (bit-exact, skipped), moving the
+    // knob off 20 Hz engages it. No separate enable param; the side filter resets on re-engage.
     {
-        const bool bassMonoOn = msParam->load() > 0.5f && numCh >= 2;
+        const bool bassMonoOn = numCh >= 2;
         msBassSm.setTargetValue (msBassParam->load());
         const float bassFc = msBassSm.skip (numSamples);
-        const bool bassActive = bassMonoOn && (msBassSm.isSmoothing() || bassFc > 21.0f);
+        const bool bassActive = bassMonoOn && (msBassSm.isSmoothing() || bassFc > 20.5f);
         if (bassActive != prevBassActive) { if (bassActive) sideHP.reset(); prevBassActive = bassActive; }
         if (bassActive)
         {
@@ -573,6 +569,7 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     const float relMs     = duckRelParam->load();
     const float relCoeff  = std::exp (-1.0f / juce::jmax (1.0f, relMs * 0.001f * (float) currentSampleRate));
 
+    float maxGR = 0.0f;   // most ducking gain reduction this block, for the Duck-knob probe
     for (int i = 0; i < numSamples; ++i)
     {
         // mono dry envelope (instant attack, param release) for ducking
@@ -594,6 +591,9 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         const float byp   = juce::jmax (bypassSm.getNextValue(), noIrSm.getNextValue());
         const float fade  = loadFade.getNextValue();
 
+        // probe the live ducking gain reduction; zeroed when bypassed / no IR (the wet is muted there)
+        maxGR = juce::jmax (maxGR, (1.0f - duckGain) * (1.0f - byp));
+
         const float dEff = dGain + byp * (1.0f - dGain);   // bypass -> dry unity
         const float wEff = wGain * (1.0f - byp) * duckGain; // bypass -> wet muted
         const float oEff = oGain + byp * (1.0f - oGain);    // bypass -> output unity
@@ -607,6 +607,8 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             mainOut.setSample (ch, i, s);
         }
     }
+
+    duckGR.store (juce::jmax (maxGR, duckGR.load() * 0.85f));   // decaying peak hold, same as the meters
 
     // output meter (decaying peak hold, same as the input meter)
     float magOut = 0.0f;

@@ -105,7 +105,7 @@ private:
                  duckLabel, duckRelLabel, fadeInLabel, decayLabel, taperLabel, stretchLabel, dampLabel;
     juce::ToggleButton reverseButton { "Reverse" }, irNormButton { "Norm IR" }, filterIRButton { "Filter IR" },
                        wetCompButton { "Wet Comp" },
-                       msButton { "" },               // Bass Mono enable — embedded (LED only) on the X-Over knob
+                       msButton { "" },               // Bass Mono engaged indicator (LED only) under the X-Over knob — read-only
                        bypassButton { "Bypass" };
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -113,18 +113,18 @@ private:
     std::unique_ptr<SliderAttachment> dryAtt, wetAtt, irGainAtt, outputAtt, toneAtt, inHPAtt, inLPAtt,
                                       preDelayAtt, widthAtt, msBassAtt,
                                       duckAtt, duckRelAtt, fadeInAtt, decayAtt, taperAtt, stretchAtt, dampAtt;
-    std::unique_ptr<ButtonAttachment> reverseAtt, irNormAtt, filterIRAtt, wetCompAtt, msAtt, bypassAtt;
+    std::unique_ptr<ButtonAttachment> reverseAtt, irNormAtt, filterIRAtt, wetCompAtt, bypassAtt;
 
     // meters: shown values + slower-decaying peak-hold lines, with last-painted
     // copies so the timer can skip repaints when nothing moved
     float inMeter = 0.0f, outMeter = 0.0f;
     float inPeak  = 0.0f, outPeak  = 0.0f;
     float inShown = -1.0f, outShown = -1.0f, inPeakShown = -1.0f, outPeakShown = -1.0f;
+    float duckGR = 0.0f, duckGRShown = -1.0f;   // live ducking gain reduction painted on the Duck knob
 
-    // last-seen values of the overlay params (tone / In HP / In LP / X-Over / Bass Mono) so the
+    // last-seen values of the overlay params (tone / In HP / In LP / X-Over) so the
     // timer can repaint the wave layer when they move — they are not bake params
     float eqToneSeen = -1.0e9f, eqHpSeen = -1.0e9f, eqLpSeen = -1.0e9f, eqBassSeen = -1.0e9f;
-    bool  eqMsSeen = false;
 
     // IR trim handles (Start/End): drag state + last-seen param values so the timer can
     // repaint the wave layer when a handle moves (the bake itself re-windows via the

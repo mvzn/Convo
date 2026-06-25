@@ -63,6 +63,7 @@ public:
 
     float getInputLevel()  const noexcept { return inputLevel.load(); }
     float getOutputLevel() const noexcept { return outputLevel.load(); }
+    float getDuckGainReduction() const noexcept { return duckGR.load(); }   // live ducking GR (0..1) for the Duck-knob probe
 
     // Baked (processed) IR for the editor's thumbnail. All accessed on the message thread.
     int getBakeGeneration() const noexcept { return bakeGeneration.load(); }
@@ -90,8 +91,7 @@ private:
     std::atomic<float>* inHPParam     = nullptr;   // pre-IR high-pass (low cut)
     std::atomic<float>* inLPParam     = nullptr;   // pre-IR low-pass  (high cut)
     std::atomic<float>* filterIRParam = nullptr;   // pre-IR filter target: input (off) or IR (on)
-    std::atomic<float>* msParam       = nullptr;   // bass-mono enable ("ms" id kept for compatibility)
-    std::atomic<float>* msBassParam   = nullptr;   // bass-mono crossover (side high-pass), Hz
+    std::atomic<float>* msBassParam   = nullptr;   // bass-mono crossover (side high-pass), Hz; 20 Hz = off / disengaged
     std::atomic<float>* preDelayParam = nullptr;
     std::atomic<float>* widthParam    = nullptr;
     std::atomic<float>* duckParam     = nullptr;
@@ -145,6 +145,7 @@ private:
     std::atomic<int>   bakeGeneration  { 0 };
     std::atomic<float> inputLevel  { 0.0f };
     std::atomic<float> outputLevel { 0.0f };
+    std::atomic<float> duckGR      { 0.0f };         // live ducking gain reduction (0..1), published for the editor probe
     std::atomic<float> tailSeconds { 0.0f };         // baked IR length + max pre-delay
     std::atomic<bool>  filterInput { true };         // runtime input filter on iff the kernel is unfiltered
 
