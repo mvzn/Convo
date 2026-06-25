@@ -54,6 +54,7 @@ private:
     void renderBackground();           // static chrome -> backgroundImage
     void renderWaveImage();            // full-IR waveform -> waveImage (the trim backdrop)
     void renderKernelImage();          // trimmed+shaped kernel -> kernelImage (the selection layer)
+    float irGainVisualGain() const;    // IR Gain as a linear factor -> waveform vertical zoom
     void drawMeterFill (juce::Graphics&, juce::Rectangle<int> zone, float level, float peak,
                         const juce::ColourGradient& fill);
     void renderOverlay();              // (re)build the cached EQ curve + bass-mono marker on param/size change
@@ -132,6 +133,7 @@ private:
     TrimHandle hoverHandle  = TrimHandle::none;   // handle under the cursor (affordance)
     float dragStartFrac = 0.0f, dragEndFrac = 1.0f;   // live trim while dragging — committed to the params on mouse-up
     float trimStartSeen = -1.0e9f, trimEndSeen = -1.0e9f;
+    float irGainSeen = -1.0e9f;        // last-seen IR Gain (visual factor) -> rescale the waveform
     static constexpr int kTrimHandleHitPx = 8;    // half-width of a handle's grab zone
 
     // cached overlay: rebuilt only when its params/size change, then just stroked in paint

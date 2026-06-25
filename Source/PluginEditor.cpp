@@ -87,8 +87,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     // --- mix / output ---
     drySlider.setTooltip    ("Level of the unprocessed (dry) signal in the mix");
     wetSlider.setTooltip    ("Level of the convolved (wet) signal in the mix");
-    irGainSlider.setTooltip ("Gain of the impulse response itself (scales the wet convolution.) "
-                             "Separate from Wet (the wet mix level)");
+    irGainSlider.setTooltip ("Gain of the impulse response itself (scales the wet convolution, "
+                             "and the waveform height above). Separate from Wet (the wet mix level)");
     outputSlider.setTooltip ("Final output trim, applied after the dry/wet mix");
 
     // --- wet shaping (post-convolution, real-time) ---
@@ -293,7 +293,7 @@ void ConvoAudioProcessorEditor::renderWaveImage()
     g.setGradientFill (juce::ColourGradient (ConvoColours::mint, 0.0f, 0.0f,
                                              ConvoColours::teal.withAlpha (0.75f),
                                              0.0f, (float) local.getHeight(), false));
-    thumbnail->drawChannels (g, local, 0.0, thumbnail->getTotalLength(), 1.0f);
+    thumbnail->drawChannels (g, local, 0.0, thumbnail->getTotalLength(), irGainVisualGain());
 
     // a blurred copy, built once here (never per frame), so the trim preview can show the
     // unselected head/tail out of focus at zero per-paint cost
@@ -324,7 +324,15 @@ void ConvoAudioProcessorEditor::renderKernelImage()
     g.setGradientFill (juce::ColourGradient (ConvoColours::mint, 0.0f, 0.0f,
                                              ConvoColours::teal.withAlpha (0.75f),
                                              0.0f, (float) local.getHeight(), false));
-    kernelThumbnail->drawChannels (g, local, 0.0, kernelThumbnail->getTotalLength(), 1.0f);
+    kernelThumbnail->drawChannels (g, local, 0.0, kernelThumbnail->getTotalLength(), irGainVisualGain());
+}
+
+// IR Gain mapped to the waveform's vertical zoom, so the displayed amplitude tracks the wet
+// trim. 0 dB = 1.0 (unchanged); +6 dB doubles it, lower values shrink it toward the baseline.
+float ConvoAudioProcessorEditor::irGainVisualGain() const
+{
+    return juce::Decibels::decibelsToGain (
+        processor.getAPVTS().getRawParameterValue ("irGain")->load(), -60.0f);
 }
 
 void ConvoAudioProcessorEditor::renderBackground()
@@ -1060,6 +1068,18 @@ void ConvoAudioProcessorEditor::timerCallback()
     {
         eqToneSeen = ovTone; eqHpSeen = ovHp; eqLpSeen = ovLp; eqBassSeen = ovBass; eqMsSeen = ovMs;
         renderOverlay();        // rebuild the cached curve once per change, not in paint
+        repaint (dropZone);
+    }
+
+    // IR Gain scales the displayed waveform amplitude (it's the wet trim, not a bake param),
+    // so re-render the wave + kernel images when it moves — keyed off the visual gain so the
+    // threshold is meaningful across the dB range
+    const float ovIrGain = irGainVisualGain();
+    if (std::abs (ovIrGain - irGainSeen) > 0.002f)
+    {
+        irGainSeen = ovIrGain;
+        renderWaveImage();
+        renderKernelImage();
         repaint (dropZone);
     }
 
