@@ -539,35 +539,22 @@ void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
     const auto zone = waveZone.toFloat();
     constexpr double fLo = 20.0, fHi = 20000.0;
 
-    // frequency grid along the bottom: minor log ticks (the 2..9 multiples between decades) plus
-    // labelled decades (100 / 1k / 10k). The whole grid sits below the wave by freqMarkY.
+    // frequency labels along the bottom (log 20 Hz – 20 kHz), nudged below the wave by freqMarkY.
+    // Spaced on the 1-2-5 sequence and kept off the 20 Hz / 20 kHz edges so labels never overlap.
     {
-        const float freqMarkY = 15.0f;   // <-- vertical nudge of the freq ticks + labels (px, + = down)
+        const float freqMarkY = 12.5f;   // <-- vertical nudge of the frequency labels (px, + = down)
         const float baseY = zone.getBottom() + freqMarkY;
         auto fx = [&] (double f) { return zone.getX() + (float) (std::log (f / fLo) / std::log (fHi / fLo)) * zone.getWidth(); };
 
-        // minor ticks: 2..9 x each decade (30..90, 200..900, 2k..9k) — short, faint
-        g.setColour (ConvoColours::border.withAlpha (0.35f));
-        for (double dec : { 10.0, 100.0, 1000.0 })
-            for (int m = 2; m <= 9; ++m)
-            {
-                const double f = dec * (double) m;
-                if (f > fLo && f < fHi)
-                    g.drawVerticalLine (juce::roundToInt (fx (f)), baseY - 2.0f, baseY);
-            }
-
-        // labelled decades: a slightly longer tick + text above it
-        struct { double f; const char* txt; } refs[] = { { 100.0, "100Hz" }, { 1000.0, "1kHz" }, { 10000.0, "10kHz" } };
+        struct { double f; const char* txt; } refs[] = {
+            { 50.0, "50" }, { 100.0, "100" }, { 200.0, "200" }, { 500.0, "500" },
+            { 1000.0, "1k" }, { 2000.0, "2k" }, { 5000.0, "5k" }, { 10000.0, "10k" }
+        };
         g.setFont (juce::Font (juce::FontOptions (10.0f)));
+        g.setColour (ConvoColours::textDim.withAlpha (0.7f));
         for (const auto& r : refs)
-        {
-            const float x = fx (r.f);
-            g.setColour (ConvoColours::border.withAlpha (0.6f));
-            g.drawVerticalLine (juce::roundToInt (x), baseY - 4.0f, baseY);
-            g.setColour (ConvoColours::textDim.withAlpha (0.7f));
-            g.drawText (r.txt, juce::Rectangle<float> (x - 16.0f, baseY - 15.0f, 32.0f, 11.0f),
+            g.drawText (r.txt, juce::Rectangle<float> (fx (r.f) - 16.0f, baseY - 15.0f, 32.0f, 11.0f),
                         juce::Justification::centred);
-        }
     }
 
     if (monoMarkerX >= 0.0f)
@@ -959,7 +946,7 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (pcolP (3, postKA), widthSlider,    widthLabel);
         // Bass Mono enable: a small square LED toggle sitting just under its knob
         auto kb = msBassSlider.getBounds();
-        msButton.setBounds (juce::Rectangle<int> (18, 16).withCentre ({ kb.getCentreX(), kb.getCentreY() + 30 }));
+        msButton.setBounds (juce::Rectangle<int> (18, 16).withCentre ({ kb.getCentreX(), kb.getCentreY() + 35 }));
     }
     {   // VOLUME (Dry/Wet/Output)
         placeKnob (pcolV (0, volKA), drySlider,    dryLabel);
