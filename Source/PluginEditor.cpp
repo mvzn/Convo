@@ -547,13 +547,13 @@ void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
         auto fx = [&] (double f) { return zone.getX() + (float) (std::log (f / fLo) / std::log (fHi / fLo)) * zone.getWidth(); };
 
         struct { double f; const char* txt; } refs[] = {
-            { 50.0, "50" }, { 100.0, "100" }, { 200.0, "200" }, { 500.0, "500" },
-            { 1000.0, "1k" }, { 2000.0, "2k" }, { 5000.0, "5k" }, { 10000.0, "10k" }
+            { 50.0, "50Hz" }, { 100.0, "100Hz" }, { 200.0, "200Hz" }, { 500.0, "500Hz" },
+            { 1000.0, "1kHz" }, { 2000.0, "2kHz" }, { 5000.0, "5kHz" }, { 10000.0, "10kHz" }
         };
         g.setFont (juce::Font (juce::FontOptions (10.0f)));
         g.setColour (ConvoColours::textDim.withAlpha (0.7f));
         for (const auto& r : refs)
-            g.drawText (r.txt, juce::Rectangle<float> (fx (r.f) - 16.0f, baseY - 15.0f, 32.0f, 11.0f),
+            g.drawText (r.txt, juce::Rectangle<float> (fx (r.f) - 20.0f, baseY - 15.0f, 40.0f, 11.0f),
                         juce::Justification::centred);
     }
 
