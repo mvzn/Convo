@@ -412,6 +412,7 @@ void ConvoAudioProcessorEditor::renderBackground()
     panel (volumePanel, "VOLUME");
     panel (duckPanel,   "DUCKING");
     panel (shapePanel,  "IR SHAPE");
+    panel (charPanel,   "IR CHARACTER");
 
     // meter wells with faint scale ticks, labels underneath
     for (const auto& zone : { inMeterZone, outMeterZone })
@@ -907,7 +908,16 @@ void ConvoAudioProcessorEditor::resized()
     auto row2 = area.removeFromTop (170);
     duckPanel = row2.removeFromLeft (filterPanel.getWidth());   // DUCKING sits under FILTER
     row2.removeFromLeft (10);
-    shapePanel = row2;                        // IR SHAPE gets the rest (bake controls + IR Gain)
+    // IR SHAPE (4 knobs + toggles = 5 slots) | IR CHARACTER (Stretch, Damp = 2 slots). 5+2 doesn't
+    // match row 1's POST 4 + VOLUME 3, so these knobs don't line up across rows; each section gets
+    // its own grid (sized so the 5 and 2 cells are equal width) for even margins.
+    {
+        const int gap    = 10;
+        const int usable = row2.getWidth() - gap;
+        const int charW  = juce::roundToInt ((2.0f * (float) usable + 60.0f) / 7.0f);   // -> cwS == cwC
+        shapePanel = row2.withWidth (usable - charW);
+        charPanel  = row2.withTrimmedLeft ((usable - charW) + gap);
+    }
 
     auto placeKnob = [] (juce::Rectangle<int> cell, juce::Slider& s, juce::Label& l)
     {
@@ -941,6 +951,14 @@ void ConvoAudioProcessorEditor::resized()
     auto pcolP = [&] (int i, juce::Rectangle<int> r) { return juce::Rectangle<int> (postKA.getX() + i * cwP, r.getY(), cwP, r.getHeight()); };
     auto pcolV = [&] (int j, juce::Rectangle<int> r) { return juce::Rectangle<int> (volKA.getX()  + j * cwV, r.getY(), cwV, r.getHeight()); };
 
+    // row-2 IR SHAPE (5 cols: 4 knobs + toggle) and IR CHARACTER (2 cols), each on its own grid
+    auto shapeKA = knobArea (shapePanel);
+    auto charKA  = knobArea (charPanel);
+    const int cwS = shapeKA.getWidth() / 5;
+    const int cwC = charKA.getWidth()  / 2;
+    auto scol = [&] (int i) { return juce::Rectangle<int> (shapeKA.getX() + i * cwS, shapeKA.getY(), cwS, shapeKA.getHeight()); };
+    auto ccol = [&] (int j) { return juce::Rectangle<int> (charKA.getX()  + j * cwC, charKA.getY(),  cwC, charKA.getHeight()); };
+
     {   // FILTER — pre-IR input filters
         auto row = knobArea (filterPanel);
         const int cellW = row.getWidth() / 2;
@@ -967,25 +985,24 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (row.removeFromLeft (cellW), duckSlider,    duckLabel);
         placeKnob (row.removeFromLeft (cellW), duckRelSlider, duckRelLabel);
     }
-    {   // IR SHAPE — aligned under POST (cols 0-3) then VOLUME (Stretch, Damp, toggles)
-        auto row = knobArea (shapePanel);
-        placeKnob (pcolP (0, row), irGainSlider,  irGainLabel);    // under Pre-Delay
-        placeKnob (pcolP (1, row), fadeInSlider,  fadeInLabel);    // under Tone
-        placeKnob (pcolP (2, row), decaySlider,   decayLabel);     // under Bass Mono
-        placeKnob (pcolP (3, row), taperSlider,   taperLabel);     // under Width
-        placeKnob (pcolV (0, row), stretchSlider, stretchLabel);   // under Dry
-        placeKnob (pcolV (1, row), dampSlider,    dampLabel);      // under Wet
-        // toggle column under the Output column
+    {   // IR SHAPE — IR Gain / Fade / Decay / Taper (4 knobs) + the toggle column (5th slot)
+        placeKnob (scol (0), irGainSlider, irGainLabel);
+        placeKnob (scol (1), fadeInSlider, fadeInLabel);
+        placeKnob (scol (2), decaySlider,  decayLabel);
+        placeKnob (scol (3), taperSlider,  taperLabel);
         const int btnH = 28, gap = 6, colH = btnH * 3 + gap * 2;
-        const int togLeft  = volKA.getX() + 2 * cwV;
-        const int togRight = outputSlider.getBounds().getRight();
-        auto toggles = juce::Rectangle<int> (togLeft, row.getCentreY() - colH / 2,
-                                             togRight - togLeft, colH);
+        auto togCell = scol (4).reduced (4, 0);
+        auto toggles = juce::Rectangle<int> (togCell.getX(), togCell.getCentreY() - colH / 2,
+                                             togCell.getWidth(), colH);
         reverseButton.setBounds  (toggles.removeFromTop (btnH));
         toggles.removeFromTop (gap);
         rawLevelButton.setBounds (toggles.removeFromTop (btnH));
         toggles.removeFromTop (gap);
         filterIRButton.setBounds (toggles.removeFromTop (btnH));
+    }
+    {   // IR CHARACTER — Stretch, Damp
+        placeKnob (ccol (0), stretchSlider, stretchLabel);
+        placeKnob (ccol (1), dampSlider,    dampLabel);
     }
 
     renderBackground();
