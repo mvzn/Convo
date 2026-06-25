@@ -150,29 +150,6 @@ void ConvoLookAndFeel::drawToggleButton (juce::Graphics& g, juce::ToggleButton& 
     if (onColour == Colour())               // fall back if no per-button colour set
         onColour = ConvoColours::mint;
 
-    // --- indicator mode: a bare LED light, no key. Driven externally (read-only) — used for the
-    //     Bass Mono "engaged" lamp. Lit + glowing when on, a dim recessed dot when off. ---
-    if (button.getProperties().getWithDefault ("indicator", false))
-    {
-        auto r    = button.getLocalBounds().toFloat();
-        const float dotR = jmin (r.getWidth(), r.getHeight()) * 0.30f;   // leave room for the glow halo
-        auto dot  = Rectangle<float> (dotR * 2.0f, dotR * 2.0f).withCentre (r.getCentre());
-        if (on)
-        {
-            g.setColour (onColour.withAlpha (0.22f)); g.fillEllipse (dot.expanded (dotR * 0.6f));
-            g.setColour (onColour.withAlpha (0.45f)); g.fillEllipse (dot.expanded (dotR * 0.28f));
-            g.setColour (onColour);                   g.fillEllipse (dot);
-            g.setColour (Colours::white.withAlpha (0.7f));
-            g.fillEllipse (dot.withSizeKeepingCentre (dotR * 0.7f, dotR * 0.7f).translated (0.0f, -dotR * 0.15f));
-        }
-        else
-        {
-            g.setColour (ConvoColours::knobBody.darker (0.3f)); g.fillEllipse (dot);
-            g.setColour (ConvoColours::border);                 g.drawEllipse (dot, 1.0f);
-        }
-        return;
-    }
-
     // --- the original small square LED chip on the right, label on the left. Depth is carried by
     //     shadows: off = raised (a soft layered drop shadow), on = lit and pressed in (inner shadow). ---
     auto b      = button.getLocalBounds().toFloat();

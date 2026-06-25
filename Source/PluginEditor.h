@@ -105,7 +105,6 @@ private:
                  duckLabel, duckRelLabel, fadeInLabel, decayLabel, taperLabel, stretchLabel, dampLabel;
     juce::ToggleButton reverseButton { "Reverse" }, irNormButton { "Norm IR" }, filterIRButton { "Filter IR" },
                        wetCompButton { "Wet Comp" },
-                       msButton { "" },               // Bass Mono engaged indicator (LED only) under the X-Over knob — read-only
                        bypassButton { "Bypass" };
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;

@@ -63,7 +63,6 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     reverseButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);    // green = active
     wetCompButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);
-    msButton.setColour        (juce::ToggleButton::tickColourId, ConvoColours::mint);
     filterIRButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);   // orange = IR-baked filter
     irNormButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::mint);
     bypassButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::copper);
@@ -75,7 +74,6 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     inHPSlider.setTooltip ("Pre-IR high-pass (low cut), 6 dB/oct, on the signal feeding the IR");
     inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 6 dB/oct, on the signal feeding the IR");
     fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp is capped at 80% of the IR length");
-    msButton.setTooltip   ("Bass Mono engaged indicator (lights when the crossover is above 20 Hz)");
     msBassSlider.setTooltip ("Bass Mono crossover: the wet collapses to mono below this frequency "
                              "and stays stereo above it. 20 Hz = off; turn it up to engage Bass Mono");
     filterIRButton.setTooltip ("Apply the In HP/In LP filter to the IR (baked, shown in the "
@@ -115,16 +113,11 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
                                 "You can also drag a file onto the display");
 
     for (auto* b : { &reverseButton, &irNormButton, &filterIRButton,
-                     &wetCompButton, &msButton, &bypassButton })
+                     &wetCompButton, &bypassButton })
     {
         b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
         addAndMakeVisible (*b);
     }
-
-    // Bass Mono has no enable: the crossover knob engages it (off at 20 Hz). msButton is now a
-    // pure read-only indicator — it lights when the mode is actually engaged, driven by the timer.
-    msButton.getProperties().set ("indicator", true);
-    msButton.setInterceptsMouseClicks (false, false);
 
     dryAtt      = std::make_unique<SliderAttachment> (apvts, "dry",         drySlider);
     wetAtt      = std::make_unique<SliderAttachment> (apvts, "wet",         wetSlider);
@@ -443,6 +436,13 @@ void ConvoAudioProcessorEditor::drawMeterFill (juce::Graphics& g, juce::Rectangl
 {
     const auto well = zone.toFloat().reduced (1.5f);
 
+    // clip to the rounded well so the fill and peak line follow its rounded corners — otherwise a
+    // full (100%) meter's square top edges overhang the rounded frame
+    juce::Graphics::ScopedSaveState ss (g);
+    juce::Path wellClip;
+    wellClip.addRoundedRectangle (well, 2.0f);
+    g.reduceClipRegion (wellClip);
+
     const float l = juce::jlimit (0.0f, 1.0f, level);
     if (l > 0.001f)
     {
@@ -450,7 +450,7 @@ void ConvoAudioProcessorEditor::drawMeterFill (juce::Graphics& g, juce::Rectangl
         // meter — repainted ~30 Hz throughout playback — never reallocates a ColourGradient
         g.setGradientFill (fillGrad);
         auto fill = well;
-        g.fillRoundedRectangle (fill.removeFromBottom (well.getHeight() * l), 2.0f);
+        g.fillRect (fill.removeFromBottom (well.getHeight() * l));   // rounded corners come from the clip
     }
 
     const float p = juce::jlimit (0.0f, 1.0f, peak);
@@ -743,10 +743,6 @@ void ConvoAudioProcessorEditor::updateKnobStates()
 {
     auto& a = processor.getAPVTS();
 
-    // Bass Mono engaged indicator: light msButton when the crossover sits above 20 Hz (the knob
-    // itself is the control now, so it's never dimmed). setToggleState repaints only on change.
-    msButton.setToggleState (a.getRawParameterValue ("msBass")->load() > 20.5f, juce::dontSendNotification);
-
     const bool onIR = a.getRawParameterValue ("filterIR")->load() > 0.5f;
     if (onIR != inFilterLabelsOnIR)
     {
@@ -906,8 +902,23 @@ void ConvoAudioProcessorEditor::resized()
 
     auto placeKnob = [] (juce::Rectangle<int> cell, juce::Slider& s, juce::Label& l)
     {
-        l.setBounds (cell.removeFromTop (15));
-        s.setBounds (cell.reduced (4, 0));
+        // Tight [label | knob | value] stack, vertically centred in the cell so the knob keeps its
+        // original position while the label and value box hug it (rather than spreading to the edges).
+        // --- nudge these two for finer vertical spacing (px); lower = closer to the knob ---
+        const int labelGap = 3;    // gap between the label and the knob
+        const int valueGap = 3;    // gap between the knob and the value box
+        const int labelH   = 15;   // label band height
+        const int textBoxH = 17;   // value box height (must match styleRotary's setTextBoxStyle)
+
+        const int knobBox = juce::jmin (cell.getWidth() - 8,
+                                        cell.getHeight() - labelH - labelGap - valueGap - textBoxH);
+        const int stackH  = labelH + labelGap + knobBox + valueGap + textBoxH;
+        auto stack = cell.withSizeKeepingCentre (cell.getWidth(), stackH);
+
+        l.setBounds (stack.removeFromTop (labelH));
+        stack.removeFromTop (labelGap);
+        auto col = stack.reduced (4, 0);
+        s.setBounds (juce::Rectangle<int> (col.getX(), stack.getY(), col.getWidth(), knobBox + valueGap + textBoxH));
     };
 
     auto knobArea = [] (juce::Rectangle<int> p)
@@ -945,9 +956,6 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (pcolP (1, postKA), preDelaySlider, preDelayLabel);
         placeKnob (pcolP (2, postKA), toneSlider,     toneLabel);
         placeKnob (pcolP (3, postKA), widthSlider,    widthLabel);
-        // Bass Mono "engaged" indicator: a small LED lamp sitting just under its knob (read-only)
-        auto kb = msBassSlider.getBounds();
-        msButton.setBounds (juce::Rectangle<int> (22, 18).withCentre ({ kb.getCentreX(), kb.getCentreY() + 35 }));
     }
     {   // VOLUME (Dry/Wet/Output)
         placeKnob (pcolV (0, volKA), drySlider,    dryLabel);
