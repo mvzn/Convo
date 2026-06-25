@@ -156,7 +156,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
         { &inLPSlider, "inLP" }, { &preDelaySlider, "preDelay" }, { &widthSlider, "width" },
         { &msBassSlider, "msBass" }, { &duckSlider, "duck" }, { &duckRelSlider, "duckRelease" },
         { &fadeInSlider, "fadeIn" }, { &decaySlider, "decay" }, { &taperSlider, "taper" },
-        { &stretchSlider, "stretch" }
+        { &stretchSlider, "stretch" }, { &dampSlider, "damp" }
     };
     for (auto& u : unitSliders)
     {
