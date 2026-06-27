@@ -611,11 +611,89 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
     duckGR.store (juce::jmax (maxGR, duckGR.load() * 0.85f));   // decaying peak hold, same as the meters
 
+    // IR audition: while playing, replace the output with the IR (resampled to the host rate),
+    // soloing it so you hear the kernel clearly. Reads a pre-filled buffer — no allocation here.
+    {
+        const int gen = auditionGen.load (std::memory_order_acquire);
+        if (gen != auditionGenSeen)
+        {
+            auditionGenSeen = gen;
+            auditionPlayIdx = auditionReadIdx.load (std::memory_order_acquire);
+            auditionPos     = 0.0;
+        }
+        bool playing = false;
+        if (auditionPlayIdx >= 0)
+        {
+            const auto& src = auditionBuf[auditionPlayIdx];
+            const int   srcN  = src.getNumSamples();
+            const int   srcCh = src.getNumChannels();
+            if (srcN > 0 && auditionPos < (double) srcN)
+            {
+                playing = true;
+                const double ratio = auditionBufRate[auditionPlayIdx] / currentSampleRate;
+                for (int i = 0; i < numSamples; ++i)
+                {
+                    if (auditionPos >= (double) srcN)
+                    {
+                        for (int ch = 0; ch < numCh; ++ch) mainOut.setSample (ch, i, 0.0f);
+                        continue;
+                    }
+                    const int   i0 = (int) auditionPos;
+                    const int   i1 = juce::jmin (i0 + 1, srcN - 1);
+                    const float fr = (float) (auditionPos - (double) i0);
+                    for (int ch = 0; ch < numCh; ++ch)
+                    {
+                        const int   sc = juce::jmin (ch, srcCh - 1);
+                        const float s  = src.getSample (sc, i0) * (1.0f - fr) + src.getSample (sc, i1) * fr;
+                        mainOut.setSample (ch, i, convo::softClip (s));
+                    }
+                    auditionPos += ratio;
+                }
+                if (auditionPos >= (double) srcN) playing = false;   // reached the end this block
+            }
+        }
+        auditionActive.store (playing);
+        if (! playing) auditionPlayIdx = -1;   // idle until the next trigger
+    }
+
     // output meter (decaying peak hold, same as the input meter)
     float magOut = 0.0f;
     for (int ch = 0; ch < numCh; ++ch)
         magOut = juce::jmax (magOut, mainOut.getMagnitude (ch, 0, numSamples));
     outputLevel.store (juce::jmax (magOut, outputLevel.load() * 0.85f));
+}
+
+void ConvoAudioProcessor::startAudition (bool baked)
+{
+    // message thread: copy the chosen source into the buffer the audio thread is NOT reading,
+    // then publish it. Both source buffers live on the message thread (bake + decode also run
+    // there, serialized by the message loop), so reading them here is race-free.
+    const juce::AudioBuffer<float>* src = nullptr;
+    double srcRate = currentSampleRate;
+    if (baked)
+    {
+        if (audioBakeScratch.getNumSamples() > 0) { src = &audioBakeScratch; srcRate = bakedIRSampleRate; }
+    }
+    else if (irLibrary.hasIR())
+    {
+        src = &irLibrary.getIR();
+        srcRate = irLibrary.getSampleRate();
+    }
+    if (src == nullptr)
+        return;
+
+    const int idx = auditionWriteIdx ^ 1;
+    auditionBuf[idx].makeCopyOf (*src);
+    auditionBufRate[idx] = srcRate > 0.0 ? srcRate : currentSampleRate;
+    auditionWriteIdx = idx;
+    auditionReadIdx.store (idx, std::memory_order_release);        // buffer is filled before this publish
+    auditionGen.fetch_add (1, std::memory_order_release);         // bump last so the audio thread re-reads
+}
+
+void ConvoAudioProcessor::stopAudition()
+{
+    auditionReadIdx.store (-1, std::memory_order_release);
+    auditionGen.fetch_add (1, std::memory_order_release);
 }
 
 IRBakeParams ConvoAudioProcessor::currentBakeParams() const

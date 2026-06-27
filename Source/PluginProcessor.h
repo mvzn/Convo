@@ -71,6 +71,13 @@ public:
     double getBakedIRSampleRate() const noexcept { return bakedIRSampleRate; }
     const juce::AudioBuffer<float>& getKernelIR() const noexcept { return audioBakeScratch; }  // trimmed+shaped kernel (the selection layer)
 
+    // IR audition (call on the message thread): play the IR through the output, soloing it.
+    // baked = the processed kernel (after trim/stretch/decay/etc.); !baked = the raw decoded IR.
+    // Editor-only convenience — audio still runs without the editor.
+    void startAudition (bool baked);
+    void stopAudition();
+    bool isAuditioning() const noexcept { return auditionActive.load(); }
+
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
     static constexpr float kDecayMinFrac = 0.04f;   // shortest tail at Decay = 100% (fraction of the baked length)
 
@@ -163,6 +170,19 @@ private:
     double bakedIRSampleRate = 48000.0;
 
     juce::AudioBuffer<float> inWork, wetWork;         // audio-thread work buffers
+
+    // IR audition playback: the message thread fills the inactive buffer and publishes its index
+    // (double-buffered so a re-trigger never races the audio thread); the audio thread plays it
+    // back resampled to the host rate, replacing the output. No allocation on the audio thread.
+    juce::AudioBuffer<float> auditionBuf[2];
+    double             auditionBufRate[2] = { 48000.0, 48000.0 };
+    int                auditionWriteIdx = 0;          // message-thread only
+    std::atomic<int>   auditionReadIdx { -1 };        // published buffer to play; -1 = stopped
+    std::atomic<int>   auditionGen     { 0 };         // bumped per start/stop so the audio thread re-reads
+    std::atomic<bool>  auditionActive  { false };     // audio-thread playing state (polled by the editor)
+    int    auditionGenSeen = 0;                       // audio-thread local
+    int    auditionPlayIdx = -1;                      // audio-thread local
+    double auditionPos = 0.0;                         // audio-thread local read position (source samples)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessor)
 };

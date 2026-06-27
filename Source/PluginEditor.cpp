@@ -190,6 +190,22 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     addAndMakeVisible (prevPresetButton);
     addAndMakeVisible (nextPresetButton);
 
+    // IR audition: Play (toggles audition on/off) + a source toggle (Baked = processed kernel,
+    // Raw = original IR). The Play label reflects the live audition state, driven by the timer.
+    playButton.setTooltip ("Audition the impulse response through the output (solos the IR)");
+    playButton.onClick = [this]
+    {
+        if (processor.isAuditioning()) processor.stopAudition();
+        else                           processor.startAudition (auditionSrcButton.getToggleState());
+    };
+    auditionSrcButton.setTooltip ("Audition source — Baked: after all processing; Raw: the original IR");
+    auditionSrcButton.setClickingTogglesState (true);
+    auditionSrcButton.setToggleState (true, juce::dontSendNotification);   // default: Baked
+    auditionSrcButton.onClick = [this]
+    { auditionSrcButton.setButtonText (auditionSrcButton.getToggleState() ? "Baked" : "Raw"); };
+    addAndMakeVisible (playButton);
+    addAndMakeVisible (auditionSrcButton);
+
     rebuildThumbnail();
 
     setSize (900, 617);   // +7 px vs. before to keep the bottom row clear of the wider header gap
@@ -687,6 +703,13 @@ void ConvoAudioProcessorEditor::mouseMove (const juce::MouseEvent& e)
 
 void ConvoAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 {
+    if (e.mods.isPopupMenu())   // right-click on the IR display: reveal the file / audition
+    {
+        if (dropZone.contains (e.getPosition()))
+            showIRContextMenu();
+        return;
+    }
+
     activeHandle = trimHandleAt (e.getPosition());
     if (activeHandle != TrimHandle::none)
     {
@@ -733,6 +756,39 @@ void ConvoAudioProcessorEditor::mouseUp (const juce::MouseEvent&)
         activeHandle = TrimHandle::none;
         repaint (dropZone);
     }
+}
+
+void ConvoAudioProcessorEditor::showIRContextMenu()
+{
+    auto& lib = processor.getIRLibrary();
+    const auto file   = lib.getCurrentFile();
+    const bool hasFile = file.existsAsFile();
+    const bool hasIR   = lib.hasIR();
+
+    juce::PopupMenu m;
+    // a plugin can't drive the host's own browser, so this reveals the file in the OS file explorer
+    m.addItem (1, "Reveal IR in file explorer", hasFile, false);
+    m.addSeparator();
+    m.addItem (2, "Play IR (baked)", hasIR, false);
+    m.addItem (3, "Play IR (raw / original)", hasIR, false);
+    if (processor.isAuditioning())
+    {
+        m.addSeparator();
+        m.addItem (4, "Stop audition", true, false);
+    }
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+        [this, file] (int r)
+        {
+            switch (r)
+            {
+                case 1: file.revealToUser();        break;
+                case 2: processor.startAudition (true);  break;
+                case 3: processor.startAudition (false); break;
+                case 4: processor.stopAudition();   break;
+                default: break;
+            }
+        });
 }
 
 // Mode hints, polled at 30 Hz but only touched on a flip:
@@ -874,6 +930,10 @@ void ConvoAudioProcessorEditor::resized()
     header.removeFromRight (4);
     presetButton.setBounds (header.removeFromRight (74));
     header.removeFromRight (8);
+    playButton.setBounds (header.removeFromLeft (46));        // [Play] [Baked/Raw] on the left
+    header.removeFromLeft (6);
+    auditionSrcButton.setBounds (header.removeFromLeft (58));
+    header.removeFromLeft (10);
     fileNameLabel.setBounds (header);
     inner.removeFromTop (10);   // match the 10 px gap between knob groups
     waveZone = inner;
@@ -1046,6 +1106,14 @@ void ConvoAudioProcessorEditor::timerCallback()
     inPeak   = juce::jmax (inMeter,  inPeak  * 0.96f);   // peak line falls slower than the bar
     outPeak  = juce::jmax (outMeter, outPeak * 0.96f);
     duckGR   = processor.getDuckGainReduction();
+
+    // reflect the live audition state on the Play button (it auto-stops at the IR's end)
+    const bool auditioning = processor.isAuditioning();
+    if (auditioning != playShown)
+    {
+        playShown = auditioning;
+        playButton.setButtonText (auditioning ? "Stop" : "Play");
+    }
 
     const auto name = processor.getIRLibrary().getDisplayName();
     if (name != lastFileName)
