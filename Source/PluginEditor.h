@@ -88,7 +88,6 @@ private:
     juce::AudioThumbnailCache kernelThumbnailCache { 2 };
     std::unique_ptr<juce::AudioThumbnail> kernelThumbnail;   // trimmed+shaped kernel, drawn inside the selection
     juce::Label               fileNameLabel;
-    juce::TextButton          loadButton { "Load IR..." };
     juce::TextButton          presetButton { "Presets" };
     juce::TextButton          prevPresetButton { juce::String::fromUTF8 ("\xE2\x97\x80") };   // ◀
     juce::TextButton          nextPresetButton { juce::String::fromUTF8 ("\xE2\x96\xB6") };   // ▶

@@ -120,8 +120,6 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     // --- output guards / global ---
     bypassButton.setTooltip    ("Passes the dry input through at unity");
-    loadButton.setTooltip      ("Load an impulse response (.wav / .aif / .aiff / .ogg / .flac). "
-                                "You can also drag a file onto the display");
 
     for (auto* b : { &filterIRButton, &wetCompButton, &polarityButton, &bypassButton })
     {
@@ -188,9 +186,6 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     fileNameLabel.setColour (juce::Label::textColourId, ConvoColours::text);
     fileNameLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (fileNameLabel);
-
-    loadButton.onClick = [this] { openFileChooser(); };
-    addAndMakeVisible (loadButton);
 
     presetButton.setTooltip     ("Save the current settings as a preset, or pick a saved one");
     prevPresetButton.setTooltip ("Previous preset");
@@ -754,6 +749,12 @@ void ConvoAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    if (e.getNumberOfClicks() >= 2 && dropZone.contains (e.getPosition()))   // double-click the display to load an IR
+    {
+        openFileChooser();
+        return;
+    }
+
     activeHandle = trimHandleAt (e.getPosition());
     if (activeHandle != TrimHandle::none)
     {
@@ -840,6 +841,8 @@ void ConvoAudioProcessorEditor::showIRContextMenu()
     const bool hasIR   = lib.hasIR();
 
     juce::PopupMenu m;
+    m.addItem (5, "Load IR\xE2\x80\xA6", true, false);   // also: double-click the display
+    m.addSeparator();
     // a plugin can't drive the host's own browser, so this reveals the file in the OS file explorer
     m.addItem (1, "Reveal IR in file explorer", hasFile, false);
     m.addSeparator();
@@ -856,6 +859,7 @@ void ConvoAudioProcessorEditor::showIRContextMenu()
         {
             switch (r)
             {
+                case 5: openFileChooser();          break;
                 case 1: file.revealToUser();        break;
                 case 2: processor.startAudition (true);  break;
                 case 3: processor.startAudition (false); break;
@@ -942,7 +946,7 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
         else
         {
             g.setColour (ConvoColours::textDim);
-            g.drawText ("Drop .wav / .aiff / .flac / .ogg here  (or click Load IR)",
+            g.drawText ("Drop .wav / .aiff / .flac / .ogg here  (or double-click to load)",
                         waveZone, juce::Justification::centred);
         }
 
@@ -1019,7 +1023,6 @@ void ConvoAudioProcessorEditor::resized()
 
     auto inner  = dropZone.reduced (10);
     auto header = inner.removeFromTop (26);
-    const int hRight = header.getRight(), hBottom = header.getBottom();
     // top header row: [ Play ][ Baked/Raw ]  file name  [ Reverse ][ Norm IR ]  [ Presets ][◀][▶]
     nextPresetButton.setBounds (header.removeFromRight (26));
     header.removeFromRight (4);
@@ -1038,10 +1041,6 @@ void ConvoAudioProcessorEditor::resized()
     fileNameLabel.setBounds (header);
     inner.removeFromTop (10);   // match the 10 px gap between knob groups
     waveZone = inner;
-
-    // Load IR: directly underneath the Presets + arrows, same width, right-aligned
-    const int presetClusterW = 74 + 4 + 26 + 4 + 26;   // Presets + ◀ + ▶
-    loadButton.setBounds (hRight - presetClusterW, hBottom + 6, presetClusterW, 26);
 
     area.removeFromTop (10);
     auto row1 = area.removeFromTop (170);
