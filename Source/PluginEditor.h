@@ -46,6 +46,7 @@ private:
     void rebuildThumbnail();
     void showIRContextMenu();              // right-click on the IR display: reveal file / audition
     void setOutputFromMouseY (float y);    // drag the Output fader line on the OUT meter -> output param
+    void setLedTextColour (juce::Button&, float amt, juce::Colour off, juce::Colour on);   // animated button text colour
 
     // presets
     void showPresetMenu();                 // popup: save new + pick by name
@@ -94,7 +95,8 @@ private:
     juce::TextButton          playButton { "Play" };            // audition the IR through the output
     juce::TextButton          auditionSrcButton { "Baked" };    // audition source toggle: Baked / Raw
     bool                      playShown = false;                // last-painted audition state (timer-driven)
-    float                     playLit = 0.0f;                   // smooth play/stop LED crossfade (0..1)
+    float                     playLit = 0.0f, reverseLit = 0.0f, normLit = 0.0f;   // smooth LED lit crossfades (0..1)
+    float                     bakedBlend = 1.0f;                // Baked/Raw colour crossfade (1 = copper / Baked, 0 = mint / Raw)
     juce::String              lastFileName;
     int                       lastBakeGen = -1;
     bool                      fileOver = false;

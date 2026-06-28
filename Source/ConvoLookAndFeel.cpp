@@ -215,74 +215,17 @@ void ConvoLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& bu
 
     auto b = button.getLocalBounds().toFloat().reduced (0.5f);
 
-    // --- LED text-button (the "led" property): the body lights in the on-colour when on, sits dark
-    //     when off, text inside. A "litAmt" property (0..1) crossfades the two looks smoothly (Play
-    //     animates it for a smooth play/stop transition); without it the toggle state snaps. ---
-    if (button.getProperties().getWithDefault ("led", false))
-    {
-        const bool  on  = button.getToggleState();
-        const float lit = jlimit (0.0f, 1.0f,
-                                  (float) button.getProperties().getWithDefault ("litAmt", on ? 1.0 : 0.0));
-
-        auto col = button.findColour (TextButton::buttonOnColourId);
-        if (col == Colour()) col = ConvoColours::mint;
-
-        auto body = b.withSizeKeepingCentre (b.getWidth() - 3.0f, b.getHeight() - 5.0f);
-        const float rad   = 4.0f;
-        const float press = jmax (lit, shouldDrawButtonAsDown ? 1.0f : 0.0f);   // raised -> pressed-in
-
-        if (press < 0.999f)   // raised drop shadow, fading out as it lights / presses in
-            for (int i = 3; i >= 1; --i)
-            {
-                g.setColour (Colours::black.withAlpha (0.22f * (1.0f - press)));
-                g.fillRoundedRectangle (body.translated (0.0f, (float) i * 0.9f).expanded ((float) i * 0.5f, (float) i * 0.2f), rad + 1.0f);
-            }
-
-        if (lit > 0.001f)     // glow halo grows with lit
-        {
-            g.setColour (col.withAlpha (0.28f * lit));
-            g.fillRoundedRectangle (body.expanded (2.0f), rad + 2.0f);
-        }
-
-        g.setColour (shouldDrawButtonAsHighlighted ? ConvoColours::knobBody.brighter (0.10f)
-                                                   : ConvoColours::knobBody.darker (0.15f));
-        g.fillRoundedRectangle (body, rad);                                    // dark face
-        if (lit > 0.001f)                                                      // lit face crossfaded over it
-        {
-            g.setGradientFill (ColourGradient (col.brighter (0.12f).withAlpha (lit), body.getCentreX(), body.getY(),
-                                               col.darker   (0.10f).withAlpha (lit), body.getCentreX(), body.getBottom(), false));
-            g.fillRoundedRectangle (body, rad);
-        }
-
-        if (press > 0.001f)   // pressed-in inner shadow grows with press
-        {
-            Graphics::ScopedSaveState s (g);
-            Path clip; clip.addRoundedRectangle (body, rad);
-            g.reduceClipRegion (clip);
-            g.setGradientFill (ColourGradient (Colours::black.withAlpha (0.5f * press * (1.0f - 0.45f * lit)),
-                                               body.getCentreX(), body.getY() - 1.0f,
-                                               Colours::transparentBlack,
-                                               body.getCentreX(), body.getY() + body.getHeight() * 0.7f, false));
-            g.fillRect (body);
-        }
-        else                  // raised top highlight
-        {
-            g.setColour (Colours::white.withAlpha (0.12f * (1.0f - press)));
-            g.drawLine (body.getX() + 3.0f, body.getY() + 1.2f, body.getRight() - 3.0f, body.getY() + 1.2f, 1.2f);
-        }
-
-        g.setColour (ConvoColours::border.interpolatedWith (col.brighter (0.5f), lit));
-        g.drawRoundedRectangle (body, rad, 1.0f);
-        return;
-    }
-
+    // All text buttons share one flat style; state is shown by the (animated) text colour, not the cap.
     auto base = ConvoColours::panelRaised;
     if (shouldDrawButtonAsDown)            base = ConvoColours::accentDeep;
     else if (shouldDrawButtonAsHighlighted) base = ConvoColours::knobBody.brighter (0.12f);
 
     g.setColour (base);
     g.fillRoundedRectangle (b, 4.0f);
-    g.setColour (shouldDrawButtonAsHighlighted ? ConvoColours::mint : ConvoColours::border);
+    // hover rim matches the button's current (animated) text colour, so it stays in sync with the
+    // grey/mint/copper text crossfade; falls back to the LookAndFeel default (mint) for plain buttons
+    g.setColour (shouldDrawButtonAsHighlighted ? button.findColour (juce::TextButton::textColourOffId)
+                                               : ConvoColours::border);
     g.drawRoundedRectangle (b, 4.0f, 1.0f);
 }
 
