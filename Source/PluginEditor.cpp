@@ -211,6 +211,9 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     auditionSrcButton.setToggleState (true, juce::dontSendNotification);   // default: Baked
     auditionSrcButton.onClick = [this]   // text colour crossfades mint (Raw) <-> copper (Baked) in the timer
     { auditionSrcButton.setButtonText (auditionSrcButton.getToggleState() ? "Baked" : "Raw"); };
+    // Play + Baked/Raw form one segmented pill (joined visuals, separate clicks)
+    playButton.getProperties().set        ("segment", "left");
+    auditionSrcButton.getProperties().set ("segment", "right");
     addAndMakeVisible (playButton);
     addAndMakeVisible (auditionSrcButton);
 
@@ -422,7 +425,7 @@ void ConvoAudioProcessorEditor::renderBackground()
 
         if (caption.isNotEmpty())
         {
-            auto strip = r.reduced (12, 0).removeFromTop (24).translated(0, 5);
+            auto strip = r.reduced (12, 0).removeFromTop (24).translated(0, 3);
             g.setColour (ConvoColours::mint.withAlpha (0.85f));
             g.fillRect (strip.getX(), strip.getCentreY() - 5, 3, 10);
             g.setColour (ConvoColours::textDim);
@@ -1043,8 +1046,7 @@ void ConvoAudioProcessorEditor::resized()
     header.removeFromRight (6);
     reverseButton.setBounds (header.removeFromRight (82));
     header.removeFromRight (12);
-    playButton.setBounds (header.removeFromLeft (46));       // [Play] [Baked/Raw] on the left
-    header.removeFromLeft (6);
+    playButton.setBounds (header.removeFromLeft (46));       // [ Play | Baked/Raw ] — one segmented pill, flush
     auditionSrcButton.setBounds (header.removeFromLeft (58));
     header.removeFromLeft (10);
     fileNameLabel.setBounds (header);
@@ -1144,7 +1146,7 @@ void ConvoAudioProcessorEditor::resized()
 
     // Filter IR: inline with the FILTER caption, right side
     {
-        auto cap = filterPanel.reduced (10, 0).removeFromTop (24).translated(0,5);
+        auto cap = filterPanel.reduced (10, 0).removeFromTop (24).translated(5,3);
         filterIRButton.setBounds (cap.removeFromRight (84).withSizeKeepingCentre (84, 20));
     }
 
@@ -1222,7 +1224,20 @@ void ConvoAudioProcessorEditor::timerCallback()
             bn.repaint();
         }
     };
-    animText (playButton,        playLit,    auditioning ? 1.0f : 0.0f,                          ConvoColours::label, ConvoColours::mint);
+    // Play follows playback; while playing, the whole segmented pill's border lights up (both halves)
+    {
+        const float target = auditioning ? 1.0f : 0.0f;
+        if (std::abs (playLit - target) > 0.0015f)
+        {
+            playLit += (target - playLit) * 0.3f;
+            if (std::abs (playLit - target) < 0.02f) playLit = target;
+            setLedTextColour (playButton, playLit, ConvoColours::label, ConvoColours::mint);
+            playButton.getProperties().set        ("rimLit", (double) playLit);
+            auditionSrcButton.getProperties().set ("rimLit", (double) playLit);
+            playButton.repaint();
+            auditionSrcButton.repaint();
+        }
+    }
     animText (reverseButton,     reverseLit, reverseButton.getToggleState() ? 1.0f : 0.0f,       ConvoColours::label, ConvoColours::mint);
     animText (irNormButton,      normLit,    irNormButton.getToggleState()  ? 1.0f : 0.0f,       ConvoColours::label, ConvoColours::mint);
     animText (auditionSrcButton, bakedBlend, auditionSrcButton.getToggleState() ? 1.0f : 0.0f,   ConvoColours::mint,  ConvoColours::copper);

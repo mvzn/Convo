@@ -213,20 +213,42 @@ void ConvoLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& bu
 {
     using namespace juce;
 
-    auto b = button.getLocalBounds().toFloat().reduced (0.5f);
-
     // All text buttons share one flat style; state is shown by the (animated) text colour, not the cap.
+    // A "segment" property ("left"/"right") rounds only the outer corners and keeps the joined edge
+    // flush, so Play + Baked/Raw read as one segmented pill (each still clicks independently).
+    const float rad = 4.0f;
+    const auto  seg = button.getProperties().getWithDefault ("segment", juce::var()).toString();
+    auto full = button.getLocalBounds().toFloat();
+    juce::Rectangle<float> b;
+    juce::Path p;
+    if (seg == "left")
+    {
+        b = full.withTrimmedTop (0.5f).withTrimmedBottom (0.5f).withTrimmedLeft (0.5f);   // joined (right) edge flush
+        p.addRoundedRectangle (b.getX(), b.getY(), b.getWidth(), b.getHeight(), rad, rad, true, false, true, false);
+    }
+    else if (seg == "right")
+    {
+        b = full.withTrimmedTop (0.5f).withTrimmedBottom (0.5f).withTrimmedRight (0.5f);   // joined (left) edge flush
+        p.addRoundedRectangle (b.getX(), b.getY(), b.getWidth(), b.getHeight(), rad, rad, false, true, false, true);
+    }
+    else
+    {
+        b = full.reduced (0.5f);
+        p.addRoundedRectangle (b, rad);
+    }
+
     auto base = ConvoColours::panelRaised;
     if (shouldDrawButtonAsDown)            base = ConvoColours::accentDeep;
     else if (shouldDrawButtonAsHighlighted) base = ConvoColours::knobBody.brighter (0.12f);
 
     g.setColour (base);
-    g.fillRoundedRectangle (b, 4.0f);
-    // hover rim matches the button's current (animated) text colour, so it stays in sync with the
-    // grey/mint/copper text crossfade; falls back to the LookAndFeel default (mint) for plain buttons
-    g.setColour (shouldDrawButtonAsHighlighted ? button.findColour (juce::TextButton::textColourOffId)
-                                               : ConvoColours::border);
-    g.drawRoundedRectangle (b, 4.0f, 1.0f);
+    g.fillPath (p);
+    // rim lights from the dark border to the button's (animated) text colour. Hover forces it on;
+    // the "rimLit" property (0..1) lights it otherwise — e.g. the whole pill while playback is on.
+    const float rimLit = juce::jmax (shouldDrawButtonAsHighlighted ? 1.0f : 0.0f,
+                                     (float) button.getProperties().getWithDefault ("rimLit", 0.0));
+    g.setColour (ConvoColours::border.interpolatedWith (button.findColour (juce::TextButton::textColourOffId), rimLit));
+    g.strokePath (p, juce::PathStrokeType (1.0f));
 }
 
 juce::Font ConvoLookAndFeel::getLabelFont (juce::Label& label)
