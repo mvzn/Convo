@@ -22,8 +22,9 @@ struct IRBakeParams
                                // false = "Raw": the IR's recorded level, unscaled
     bool  filterIR = false;    // bake the pre-IR HP/LP into the kernel instead of filtering
                                // the input at runtime (cutoffs below; only used when true)
-    float inHPHz = 20.0f;      // first-order high-pass cutoff baked into the kernel
-    float inLPHz = 20000.0f;   // first-order low-pass  cutoff baked into the kernel
+    float inHPHz = 20.0f;      // 2nd-order high-pass cutoff baked into the kernel
+    float inLPHz = 20000.0f;   // 2nd-order low-pass  cutoff baked into the kernel
+    float inFilterQ = 0.707f;  // shared resonance/Q for the baked HP/LP (matches the runtime filter)
     float stretch = 1.0f;      // time-stretch factor: resample the IR to this multiple of its
                                // length before windowing (1.0 = off; <1 shortens, >1 lengthens)
     float dampAmt = 0.0f;      // damping 0..1: progressive HF rolloff over the tail (air
@@ -46,7 +47,8 @@ struct IRBakeParams
             // cutoffs only affect the bake when the filter targets the IR, so changing
             // them in input-filter mode must not trigger a needless re-bake
             && (! filterIR || (juce::approximatelyEqual (inHPHz, o.inHPHz)
-                            && juce::approximatelyEqual (inLPHz, o.inLPHz)));
+                            && juce::approximatelyEqual (inLPHz, o.inLPHz)
+                            && juce::approximatelyEqual (inFilterQ, o.inFilterQ)));
     }
     bool operator!= (const IRBakeParams& o) const noexcept { return ! (*this == o); }
 };

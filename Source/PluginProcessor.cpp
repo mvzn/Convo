@@ -5,6 +5,13 @@
 
 #include <cmath>
 
+// shared resonance/Q mapping for the pre-IR In HP/LP corners: 0% = flat (Butterworth 0.707),
+// 100% = resonant. Used by both the real-time filter and the IR-bake filter so they match.
+static float mapFilterQ (float percent) noexcept
+{
+    return juce::jmap (juce::jlimit (0.0f, 100.0f, percent) * 0.01f, 0.707f, 6.0f);
+}
+
 ConvoAudioProcessor::ConvoAudioProcessor()
     : juce::AudioProcessor (BusesProperties()
         .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
@@ -24,6 +31,10 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     widthParam    = apvts.getRawParameterValue ("width");
     duckParam     = apvts.getRawParameterValue ("duck");
     duckRelParam  = apvts.getRawParameterValue ("duckRelease");
+    gateParam     = apvts.getRawParameterValue ("gate");
+    duckPreParam  = apvts.getRawParameterValue ("duckPre");
+    polarityParam = apvts.getRawParameterValue ("polarity");
+    filterQParam  = apvts.getRawParameterValue ("filterQ");
     irStartParam  = apvts.getRawParameterValue ("irStart");
     irEndParam    = apvts.getRawParameterValue ("irEnd");
     fadeInParam   = apvts.getRawParameterValue ("fadeIn");
@@ -74,7 +85,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
         ParameterID { "tone", 1 }, "Tone",
         NormalisableRange<float> (-100.0f, 100.0f, 0.1f), 0.0f, "%"));
 
-    // pre-IR input filter (first-order, 6 dB/oct), applied to the wet source before
+    // pre-IR input filter (2nd-order, 12 dB/oct, shared Q), applied to the wet source before
     // convolution; the extremes (20 Hz HP / 20 kHz LP) are effectively flat
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "inHP", 1 }, "Input HP",
@@ -83,6 +94,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "inLP", 1 }, "Input LP",
         NormalisableRange<float> (200.0f, 20000.0f, 1.0f, 0.25f), 20000.0f, "Hz"));
+
+    // shared resonance/Q for the In HP & In LP corners: 0% = flat (Q 0.707), up = resonant peak
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "filterQ", 1 }, "Filter Q",
+        NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f, "%"));
 
     // pre-IR filter target: off = filter the input at runtime (automatable); on = bake the
     // filter into the kernel (shows in the IR display, cheaper at runtime). Same audio result.
@@ -104,6 +120,21 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "duckRelease", 1 }, "Duck Rel",
         NormalisableRange<float> (20.0f, 1000.0f, 1.0f, 0.4f), 200.0f, "ms"));
+
+    // Gate (gated reverb): gates the wet by the dry input level — when the input falls below the
+    // threshold the wet fades out (cuts the tail when the source stops). 0% = off. Real-time stage.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "gate", 1 }, "Gate",
+        NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f, "%"));
+
+    // Duck routing: off = duck the wet output (post-convolution); on = duck the signal going into
+    // the convolution (pre), so the tail still rings out after a transient ducks the input.
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "duckPre", 1 }, "Duck Pre", false));
+
+    // Wet polarity invert (crossfaded through zero so the flip is click-free).
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "polarity", 1 }, "Polarity", false));
 
     // --- IR-bake controls ---
     // IR trim: keep only the region between Start and End (fraction of the IR length).
@@ -210,8 +241,9 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     inputHP.prepare (spec);
     inputLP.prepare (spec);
-    *inputHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (sampleRate, inHPParam->load());
-    *inputLP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass  (sampleRate, inLPParam->load());
+    const float fq0 = mapFilterQ (filterQParam->load());
+    *inputHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (sampleRate, inHPParam->load(), fq0);
+    *inputLP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeLowPass  (sampleRate, inLPParam->load(), fq0);
     inputHP.reset();
     inputLP.reset();
 
@@ -252,6 +284,8 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     wetCompSm.reset    (sampleRate, 0.25);   // slow follower: a loudness keeper, not a compressor
     inHPSm.reset       (sampleRate, 0.05);
     inLPSm.reset       (sampleRate, 0.05);
+    filterQSm.reset    (sampleRate, 0.05);
+    polaritySm.reset   (sampleRate, 0.005);   // ~5 ms crossfade through zero on a flip
     msBassSm.reset     (sampleRate, 0.05);
     preDelaySm.reset   (sampleRate, 0.05);   // glide the delay length so modulation doesn't teleport the read pointer
 
@@ -268,11 +302,14 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     wetCompSm.setCurrentAndTargetValue    (1.0f);
     inHPSm.setCurrentAndTargetValue       (inHPParam->load());
     inLPSm.setCurrentAndTargetValue       (inLPParam->load());
+    filterQSm.setCurrentAndTargetValue    (filterQParam->load());
+    polaritySm.setCurrentAndTargetValue   (polarityParam->load() > 0.5f ? -1.0f : 1.0f);
     msBassSm.setCurrentAndTargetValue     (msBassParam->load());
     preDelaySm.setCurrentAndTargetValue   (juce::jlimit (0.0f, (float) (maxPreDelaySamples - 2),
                                                          preDelayParam->load() * 0.001f * (float) sampleRate));
 
     duckEnv         = 0.0f;
+    gateGain        = 1.0f;
     wetCompTarget   = 1.0f;
     prevFilterInput = true;
     prevToneActive  = prevInHpActive = prevInLpActive = prevBassActive
@@ -280,6 +317,8 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
 
     inWork.setSize  ((int) spec.numChannels, maxSamples);
     wetWork.setSize ((int) spec.numChannels, maxSamples);
+    duckGainBuf.assign ((size_t) maxSamples, 1.0f);
+    gateGainBuf.assign ((size_t) maxSamples, 1.0f);
 }
 
 void ConvoAudioProcessor::releaseResources()
@@ -386,21 +425,69 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     {
         inHPSm.setTargetValue (inHPParam->load());
         inLPSm.setTargetValue (inLPParam->load());
+        filterQSm.setTargetValue (filterQParam->load());
         const float hp = inHPSm.skip (numSamples);
         const float lp = inLPSm.skip (numSamples);
+        const float fq = mapFilterQ (filterQSm.skip (numSamples));   // 0..100% -> Q
         // skip each filter while it sits at its flat extreme (20 Hz / 20 kHz); reset on re-engage
         const bool hpActive = inHPSm.isSmoothing() || hp > 21.0f;
         const bool lpActive = inLPSm.isSmoothing() || lp < 19900.0f;
         if (hpActive != prevInHpActive) { if (hpActive) inputHP.reset(); prevInHpActive = hpActive; }
         if (lpActive != prevInLpActive) { if (lpActive) inputLP.reset(); prevInLpActive = lpActive; }
         juce::dsp::ProcessContextReplacing<float> fctx (wetBlock);
-        if (hpActive) { *inputHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (currentSampleRate, hp); inputHP.process (fctx); }
-        if (lpActive) { *inputLP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass  (currentSampleRate, lp); inputLP.process (fctx); }
+        if (hpActive) { *inputHP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (currentSampleRate, hp, fq); inputHP.process (fctx); }
+        if (lpActive) { *inputLP.state = juce::dsp::IIR::ArrayCoefficients<float>::makeLowPass  (currentSampleRate, lp, fq); inputLP.process (fctx); }
     }
     else
     {
         inHPSm.skip (numSamples);   // keep the smoothers tracking so re-engaging starts in place
         inLPSm.skip (numSamples);
+        filterQSm.skip (numSamples);
+    }
+
+    // Pre-convolution dynamics, both keyed off the dry input peak:
+    //  - Gate (gated reverb): always gates the dry signal feeding the IR — cuts the convolution
+    //    input when the input drops below the threshold (the existing tail still rings out). Fast
+    //    attack; release = the Duck Release setting.
+    //  - Duck: gain filled here so it can route either side. Duck Pre on applies it to the
+    //    convolution input too; off leaves it for the mix loop to duck the wet output.
+    const bool duckPre = duckPreParam->load() > 0.5f;
+    {
+        duckSm.setTargetValue (duckParam->load() * 0.01f);
+        const float dRelMs = duckRelParam->load();
+        const float dRelCo = std::exp (-1.0f / juce::jmax (1.0f, dRelMs * 0.001f * (float) currentSampleRate));
+
+        const float gatePct = gateParam->load();
+        const bool  gateOn  = gatePct > 0.5f;
+        const float gateThr = juce::Decibels::decibelsToGain (juce::jmap (gatePct * 0.01f, 0.0f, 1.0f, -60.0f, -6.0f));
+        const float gateAtt = std::exp (-1.0f / juce::jmax (1.0f, 0.002f * (float) currentSampleRate));
+        const float gateRel = dRelCo;   // gate release tracks the Duck Release
+
+        float maxGateGR = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float inAbs = 0.0f;
+            for (int ch = 0; ch < numCh; ++ch)
+                inAbs = juce::jmax (inAbs, std::abs (inWork.getSample (ch, i)));
+            duckEnv = inAbs > duckEnv ? inAbs : inAbs + (duckEnv - inAbs) * dRelCo;
+            const float dAmt = duckSm.getNextValue();
+            duckGainBuf[(size_t) i] = 1.0f - dAmt * juce::jlimit (0.0f, 1.0f, duckEnv);
+
+            const float gTarget = (! gateOn || inAbs > gateThr) ? 1.0f : 0.0f;
+            gateGain = gTarget + (gateGain - gTarget) * (gTarget > gateGain ? gateAtt : gateRel);
+            gateGainBuf[(size_t) i] = gateGain;
+            maxGateGR = juce::jmax (maxGateGR, 1.0f - gateGain);
+        }
+
+        // gate always gates the convolution input; the duck does too when Duck Pre is on. Both are
+        // unity (bit-exact no-op) when their feature is off, so the input passes through untouched.
+        for (int ch = 0; ch < numCh; ++ch)
+        {
+            auto* w = wetWork.getWritePointer (ch);
+            for (int i = 0; i < numSamples; ++i)
+                w[i] *= duckPre ? gateGainBuf[(size_t) i] * duckGainBuf[(size_t) i] : gateGainBuf[(size_t) i];
+        }
+        gateGR.store (juce::jmax (maxGateGR, gateGR.load() * 0.85f));   // decaying peak hold for the Gate-knob indicator
     }
 
     convolution.process (wetBlock);
@@ -559,44 +646,38 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     }
 
     // --- mix: dry + ducked wet, bypass crossfade, output trim, load fade ---
+    polaritySm.setTargetValue   (polarityParam->load() > 0.5f ? -1.0f : 1.0f);
     dryGainSm.setTargetValue    (juce::Decibels::decibelsToGain (dryParam->load(),    -60.0f));
     wetGainSm.setTargetValue    (juce::Decibels::decibelsToGain (wetParam->load(),    -60.0f));
     irGainSm.setTargetValue     (juce::Decibels::decibelsToGain (irGainParam->load(), -60.0f));
     outputGainSm.setTargetValue (juce::Decibels::decibelsToGain (outputParam->load(), -60.0f));
-    duckSm.setTargetValue       (duckParam->load() * 0.01f);
     bypassSm.setTargetValue     (bypassParam->load() > 0.5f ? 1.0f : 0.0f);
     noIrSm.setTargetValue       (convolution.hasIR() ? 0.0f : 1.0f);   // no IR -> behave like bypass
-
-    const float relMs     = duckRelParam->load();
-    const float relCoeff  = std::exp (-1.0f / juce::jmax (1.0f, relMs * 0.001f * (float) currentSampleRate));
 
     float maxGR = 0.0f;   // most ducking gain reduction this block, for the Duck-knob probe
     for (int i = 0; i < numSamples; ++i)
     {
-        // mono dry envelope (instant attack, param release) for ducking
-        float inAbs = 0.0f;
-        for (int ch = 0; ch < numCh; ++ch)
-            inAbs = juce::jmax (inAbs, std::abs (inWork.getSample (ch, i)));
-        duckEnv = inAbs > duckEnv ? inAbs : inAbs + (duckEnv - inAbs) * relCoeff;
-
-        const float duckAmt  = duckSm.getNextValue();
-        const float duckGain = 1.0f - duckAmt * juce::jlimit (0.0f, 1.0f, duckEnv);
+        // duck the wet output only when routing post-conv; when Duck Pre is on it's already baked
+        // into the convolution input, so the wet passes through here at unity (gate is always pre)
+        const float duckGain = duckPre ? 1.0f : duckGainBuf[(size_t) i];
 
         const float dGain = dryGainSm.getNextValue();
         const float wGain = wetGainSm.getNextValue();
         const float iGain = irGainSm.getNextValue();   // IR Gain: gain of the IR convolved with the input
         const float cGain = wetCompSm.getNextValue();   // adaptive wet gain compensation
         const float oGain = outputGainSm.getNextValue();
+        const float pol   = polaritySm.getNextValue();   // wet polarity sign (crossfades through 0)
         // no-IR state behaves exactly like bypass: dry at unity, wet muted —
         // a freshly inserted Convo must never silence the track
         const float byp   = juce::jmax (bypassSm.getNextValue(), noIrSm.getNextValue());
         const float fade  = loadFade.getNextValue();
 
-        // probe the live ducking gain reduction; zeroed when bypassed / no IR (the wet is muted there)
-        maxGR = juce::jmax (maxGR, (1.0f - duckGain) * (1.0f - byp));
+        // probe the live ducking gain reduction (from the precomputed gain, so the probe reads the
+        // same pre/post routing); zeroed when bypassed / no IR (the wet is muted there)
+        maxGR = juce::jmax (maxGR, (1.0f - duckGainBuf[(size_t) i]) * (1.0f - byp));
 
         const float dEff = dGain + byp * (1.0f - dGain);   // bypass -> dry unity
-        const float wEff = wGain * (1.0f - byp) * duckGain; // bypass -> wet muted
+        const float wEff = wGain * (1.0f - byp) * duckGain * pol; // bypass -> wet muted; pol inverts (gate is pre-conv)
         const float oEff = oGain + byp * (1.0f - oGain);    // bypass -> output unity
 
         for (int ch = 0; ch < numCh; ++ch)
@@ -715,6 +796,7 @@ IRBakeParams ConvoAudioProcessor::currentBakeParams() const
     p.filterIR     = filterIRParam->load() > 0.5f;
     p.inHPHz       = inHPParam->load();
     p.inLPHz       = inLPParam->load();
+    p.inFilterQ    = mapFilterQ (filterQParam->load());
     return p;
 }
 

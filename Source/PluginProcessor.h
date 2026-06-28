@@ -64,6 +64,7 @@ public:
     float getInputLevel()  const noexcept { return inputLevel.load(); }
     float getOutputLevel() const noexcept { return outputLevel.load(); }
     float getDuckGainReduction() const noexcept { return duckGR.load(); }   // live ducking GR (0..1) for the Duck-knob probe
+    float getGateActivity() const noexcept { return gateGR.load(); }        // live gate cut (0..1) for the Gate-knob indicator
 
     // Baked (processed) IR for the editor's thumbnail. All accessed on the message thread.
     int getBakeGeneration() const noexcept { return bakeGeneration.load(); }
@@ -103,6 +104,10 @@ private:
     std::atomic<float>* widthParam    = nullptr;
     std::atomic<float>* duckParam     = nullptr;
     std::atomic<float>* duckRelParam  = nullptr;
+    std::atomic<float>* gateParam     = nullptr;   // gated-reverb threshold on the wet (0 = off)
+    std::atomic<float>* duckPreParam  = nullptr;   // duck routing: pre-convolution (input) vs post (wet)
+    std::atomic<float>* polarityParam = nullptr;   // invert the wet polarity
+    std::atomic<float>* filterQParam  = nullptr;   // shared resonance/Q for the In HP/LP corners
     std::atomic<float>* irStartParam  = nullptr;   // IR head trim (fraction of length)
     std::atomic<float>* irEndParam    = nullptr;   // IR tail trim (fraction of length)
     std::atomic<float>* fadeInParam   = nullptr;
@@ -120,7 +125,7 @@ private:
     using Duplicator = juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
                                                       juce::dsp::IIR::Coefficients<float>>;
     Duplicator lowShelf, highShelf;                  // tilt tone
-    Duplicator inputHP, inputLP;                     // pre-IR input filter (first-order, 6 dB/oct)
+    Duplicator inputHP, inputLP;                     // pre-IR input filter (2nd-order, 12 dB/oct, shared Q)
     Duplicator sideHP;                               // bass-mono: 2nd-order (Q=0.5, 12 dB/oct) side high-pass
                                                      // post-convolution. Mid stays unfiltered, so center
                                                      // content is phase-flat; Q=0.5 keeps the side phase clean
@@ -132,6 +137,8 @@ private:
                                noIrSm,               // no-IR auto-bypass: dry at unity while nothing is live
                                wetCompSm,            // adaptive wet gain compensation (dry-referenced)
                                inHPSm, inLPSm,       // pre-IR filter cutoffs (smoothed, per-block coeff rebuild)
+                               filterQSm,            // pre-IR filter resonance/Q (smoothed)
+                               polaritySm,           // wet polarity sign (+1/-1, crossfaded through 0 = click-free)
                                msBassSm,             // bass-mono crossover cutoff (smoothed)
                                preDelaySm;           // pre-delay length in samples (per-sample setDelay so modulation glides)
 
@@ -140,6 +147,7 @@ private:
     int    maxDryDelaySamples = 1;
     int    currentDryDelay = -1;
     float  duckEnv = 0.0f;
+    float  gateGain = 1.0f;   // gated-reverb gate gain on the wet (audio-thread, smoothed open/close)
     float  wetCompTarget = 1.0f;   // wet-comp ratio held across blocks (frozen while input is quiet)
     bool   prevFilterInput = true; // audio-thread edge detect: reset input filters when re-engaged
     // neutral-stage skip edge detect: reset the filter/delay on re-engage so the resumed block
@@ -153,6 +161,7 @@ private:
     std::atomic<float> inputLevel  { 0.0f };
     std::atomic<float> outputLevel { 0.0f };
     std::atomic<float> duckGR      { 0.0f };         // live ducking gain reduction (0..1), published for the editor probe
+    std::atomic<float> gateGR      { 0.0f };         // live gate cut (0..1), published for the Gate-knob activity indicator
     std::atomic<float> tailSeconds { 0.0f };         // baked IR length + max pre-delay
     std::atomic<bool>  filterInput { true };         // runtime input filter on iff the kernel is unfiltered
 
@@ -170,6 +179,8 @@ private:
     double bakedIRSampleRate = 48000.0;
 
     juce::AudioBuffer<float> inWork, wetWork;         // audio-thread work buffers
+    std::vector<float>       duckGainBuf;             // per-sample duck gain (computed before convolution so it can route pre/post)
+    std::vector<float>       gateGainBuf;             // per-sample gate gain (always applied to the convolution input)
 
     // IR audition playback: the message thread fills the inactive buffer and publishes its index
     // (double-buffered so a re-trigger never races the audio thread); the audio thread plays it

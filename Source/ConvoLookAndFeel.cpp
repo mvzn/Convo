@@ -103,8 +103,14 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
     {
         Path value;
         value.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, rotaryStartAngle, angle, true);
-        g.setGradientFill (ColourGradient (ConvoColours::accent, centre.x, centre.y + arcR,
-                                           ConvoColours::mint,   centre.x, centre.y - arcR, false));
+        // Gate knob: the "gateAct" property (>= 0) tints the arc grey when idle -> mint when the gate
+        // is actively cutting. Every other knob keeps the accent->mint gradient.
+        const float gateAct = (float) slider.getProperties().getWithDefault ("gateAct", -1.0);
+        if (gateAct >= 0.0f)
+            g.setColour (ConvoColours::textDim.interpolatedWith (ConvoColours::mint, jlimit (0.0f, 1.0f, gateAct)));
+        else
+            g.setGradientFill (ColourGradient (ConvoColours::accent, centre.x, centre.y + arcR,
+                                               ConvoColours::mint,   centre.x, centre.y - arcR, false));
         g.strokePath (value, PathStrokeType (lineW, PathStrokeType::curved, PathStrokeType::rounded));
     }
 
