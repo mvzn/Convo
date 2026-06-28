@@ -209,6 +209,65 @@ void ConvoLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& bu
 
     auto b = button.getLocalBounds().toFloat().reduced (0.5f);
 
+    // --- LED-style button (the "led" property): the whole body lights in the on-colour when the
+    //     toggle is on, sits dark/unlit when off. Same shadow treatment as the LED toggle chips —
+    //     raised (drop shadow) when off, pressed in (inner shadow) when on. Text is drawn inside by
+    //     the default text renderer (set textColourOnId/OffId for contrast). ---
+    if (button.getProperties().getWithDefault ("led", false))
+    {
+        const bool on = button.getToggleState();
+        auto col = button.findColour (TextButton::buttonOnColourId);
+        if (col == Colour()) col = ConvoColours::mint;
+
+        auto body = b.withSizeKeepingCentre (b.getWidth() - 3.0f, b.getHeight() - 5.0f);   // room for the cast shadow
+        const float rad = 4.0f;
+        const bool  pushedIn = on || shouldDrawButtonAsDown;
+
+        if (! pushedIn)   // raised: soft layered drop shadow grounds the cap
+        {
+            for (int i = 3; i >= 1; --i)
+            {
+                g.setColour (Colours::black.withAlpha (0.22f));
+                g.fillRoundedRectangle (body.translated (0.0f, (float) i * 0.9f).expanded ((float) i * 0.5f, (float) i * 0.2f), rad + 1.0f);
+            }
+        }
+
+        if (on)   // glow halo around the lit cap
+        {
+            g.setColour (col.withAlpha (0.28f));
+            g.fillRoundedRectangle (body.expanded (2.0f), rad + 2.0f);
+        }
+
+        if (on)
+            g.setGradientFill (ColourGradient (col.brighter (0.12f), body.getCentreX(), body.getY(),
+                                               col.darker   (0.10f), body.getCentreX(), body.getBottom(), false));
+        else
+            g.setColour (shouldDrawButtonAsHighlighted ? ConvoColours::knobBody.brighter (0.10f)
+                                                       : ConvoColours::knobBody.darker (0.15f));
+        g.fillRoundedRectangle (body, rad);
+
+        if (pushedIn)   // pressed in: inner shadow down from the top edge -> recessed
+        {
+            Graphics::ScopedSaveState s (g);
+            Path clip; clip.addRoundedRectangle (body, rad);
+            g.reduceClipRegion (clip);
+            g.setGradientFill (ColourGradient (Colours::black.withAlpha (on ? 0.28f : 0.55f),
+                                               body.getCentreX(), body.getY() - 1.0f,
+                                               Colours::transparentBlack,
+                                               body.getCentreX(), body.getY() + body.getHeight() * 0.7f, false));
+            g.fillRect (body);
+        }
+        else            // raised: faint top highlight
+        {
+            g.setColour (Colours::white.withAlpha (0.12f));
+            g.drawLine (body.getX() + 3.0f, body.getY() + 1.2f, body.getRight() - 3.0f, body.getY() + 1.2f, 1.2f);
+        }
+
+        g.setColour (on ? col.brighter (0.5f) : ConvoColours::border);
+        g.drawRoundedRectangle (body, rad, 1.0f);
+        return;
+    }
+
     auto base = ConvoColours::panelRaised;
     if (shouldDrawButtonAsDown)            base = ConvoColours::accentDeep;
     else if (shouldDrawButtonAsHighlighted) base = ConvoColours::knobBody.brighter (0.12f);

@@ -200,7 +200,12 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     };
     auditionSrcButton.setTooltip ("Audition source — Baked: after all processing; Raw: the original IR");
     auditionSrcButton.setClickingTogglesState (true);
-    auditionSrcButton.setToggleState (true, juce::dontSendNotification);   // default: Baked
+    auditionSrcButton.getProperties().set ("led", true);                          // lit body when on (Baked)
+    auditionSrcButton.setColour (juce::TextButton::buttonOnColourId, ConvoColours::mint);
+    auditionSrcButton.setColour (juce::TextButton::textColourOnId,  ConvoColours::bg);      // dark text on the lit cap
+    auditionSrcButton.setColour (juce::TextButton::textColourOffId, ConvoColours::label);   // dim text when unlit (Raw)
+    auditionSrcButton.setToggleState (false, juce::dontSendNotification);          // default: Raw (unlit)
+    auditionSrcButton.setButtonText ("Raw");
     auditionSrcButton.onClick = [this]
     { auditionSrcButton.setButtonText (auditionSrcButton.getToggleState() ? "Baked" : "Raw"); };
     addAndMakeVisible (playButton);
