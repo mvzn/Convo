@@ -32,7 +32,6 @@ ConvoAudioProcessor::ConvoAudioProcessor()
     duckParam     = apvts.getRawParameterValue ("duck");
     duckRelParam  = apvts.getRawParameterValue ("duckRelease");
     gateParam     = apvts.getRawParameterValue ("gate");
-    duckPreParam  = apvts.getRawParameterValue ("duckPre");
     polarityParam = apvts.getRawParameterValue ("polarity");
     filterQParam  = apvts.getRawParameterValue ("filterQ");
     irStartParam  = apvts.getRawParameterValue ("irStart");
@@ -126,11 +125,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "gate", 1 }, "Gate",
         NormalisableRange<float> (0.0f, 100.0f, 1.0f), 0.0f, "%"));
-
-    // Duck routing: off = duck the wet output (post-convolution); on = duck the signal going into
-    // the convolution (pre), so the tail still rings out after a transient ducks the input.
-    layout.add (std::make_unique<AudioParameterBool> (
-        ParameterID { "duckPre", 1 }, "Duck Pre", false));
 
     // Wet polarity invert (crossfaded through zero so the flip is click-free).
     layout.add (std::make_unique<AudioParameterBool> (
@@ -446,12 +440,11 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     }
 
     // Pre-convolution dynamics, both keyed off the dry input peak:
-    //  - Gate (gated reverb): always gates the dry signal feeding the IR — cuts the convolution
-    //    input when the input drops below the threshold (the existing tail still rings out). Fast
-    //    attack; release = the Duck Release setting.
-    //  - Duck: gain filled here so it can route either side. Duck Pre on applies it to the
-    //    convolution input too; off leaves it for the mix loop to duck the wet output.
-    const bool duckPre = duckPreParam->load() > 0.5f;
+    //  - Gate (gated reverb): gates the dry signal feeding the IR — cuts the convolution input when
+    //    the input drops below the threshold (the existing tail still rings out). Fast attack;
+    //    release = the Duck Release setting. Applied to the convolution input here.
+    //  - Duck: the per-sample gain is filled here (envelope keyed off the input) but applied later,
+    //    to the wet output, in the mix loop.
     {
         duckSm.setTargetValue (duckParam->load() * 0.01f);
         const float dRelMs = duckRelParam->load();
@@ -479,13 +472,12 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
             maxGateGR = juce::jmax (maxGateGR, 1.0f - gateGain);
         }
 
-        // gate always gates the convolution input; the duck does too when Duck Pre is on. Both are
-        // unity (bit-exact no-op) when their feature is off, so the input passes through untouched.
+        // gate the convolution input (unity / bit-exact no-op when the gate is off)
         for (int ch = 0; ch < numCh; ++ch)
         {
             auto* w = wetWork.getWritePointer (ch);
             for (int i = 0; i < numSamples; ++i)
-                w[i] *= duckPre ? gateGainBuf[(size_t) i] * duckGainBuf[(size_t) i] : gateGainBuf[(size_t) i];
+                w[i] *= gateGainBuf[(size_t) i];
         }
         gateGR.store (juce::jmax (maxGateGR, gateGR.load() * 0.85f));   // decaying peak hold for the Gate-knob indicator
     }
@@ -657,9 +649,8 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     float maxGR = 0.0f;   // most ducking gain reduction this block, for the Duck-knob probe
     for (int i = 0; i < numSamples; ++i)
     {
-        // duck the wet output only when routing post-conv; when Duck Pre is on it's already baked
-        // into the convolution input, so the wet passes through here at unity (gate is always pre)
-        const float duckGain = duckPre ? 1.0f : duckGainBuf[(size_t) i];
+        // duck the wet output (the gain was precomputed before the convolution; gate is always pre)
+        const float duckGain = duckGainBuf[(size_t) i];
 
         const float dGain = dryGainSm.getNextValue();
         const float wGain = wetGainSm.getNextValue();

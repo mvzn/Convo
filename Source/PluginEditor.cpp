@@ -64,7 +64,6 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     wetCompButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);
     filterIRButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);   // orange = IR-baked filter
-    duckPreButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);
     polarityButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::mint);
     bypassButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::copper);
     polarityButton.setTooltip ("Invert the polarity (phase) of the wet signal");
@@ -102,8 +101,6 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
                               "input drops below the threshold (the tail still rings out). Release = Duck Release. 0% = off");
     gateSlider.getProperties().set ("gateAct", 0.0);   // marks this as the Gate knob (grey arc -> mint when active)
     filterQSlider.setTooltip ("Resonance/Q for the In HP & In LP corners: 0% = flat, up = a resonant peak at the cutoffs");
-    duckPreButton.setTooltip ("Duck pre-convolution: ducks the signal feeding the IR (the tail rings out past a "
-                              "transient) instead of the wet output. Off = duck the wet (post)");
 
     // --- wet shaping (post-convolution, real-time) ---
     toneSlider.setTooltip     ("Spectral tilt on the wet: turn down to darken (lows up, highs down), "
@@ -130,7 +127,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     loadButton.setTooltip      ("Load an impulse response (.wav / .aif / .aiff / .ogg / .flac). "
                                 "You can also drag a file onto the display");
 
-    for (auto* b : { &filterIRButton, &wetCompButton, &duckPreButton, &polarityButton, &bypassButton })
+    for (auto* b : { &filterIRButton, &wetCompButton, &polarityButton, &bypassButton })
     {
         b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
         addAndMakeVisible (*b);
@@ -158,7 +155,6 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     irNormAtt    = std::make_unique<ButtonAttachment> (apvts, "irNorm",    irNormButton);
     filterIRAtt  = std::make_unique<ButtonAttachment> (apvts, "filterIR",  filterIRButton);
     wetCompAtt   = std::make_unique<ButtonAttachment> (apvts, "wetComp",   wetCompButton);
-    duckPreAtt   = std::make_unique<ButtonAttachment> (apvts, "duckPre",   duckPreButton);
     polarityAtt  = std::make_unique<ButtonAttachment> (apvts, "polarity",  polarityButton);
     bypassAtt    = std::make_unique<ButtonAttachment> (apvts, "bypass",    bypassButton);
 
@@ -425,7 +421,7 @@ void ConvoAudioProcessorEditor::renderBackground()
 
         if (caption.isNotEmpty())
         {
-            auto strip = r.reduced (12, 0).removeFromTop (24);
+            auto strip = r.reduced (12, 0).removeFromTop (24).translated(0, 5);
             g.setColour (ConvoColours::mint.withAlpha (0.85f));
             g.fillRect (strip.getX(), strip.getCentreY() - 5, 3, 10);
             g.setColour (ConvoColours::textDim);
@@ -980,9 +976,9 @@ void ConvoAudioProcessorEditor::resized()
 
     headerZone = area.removeFromTop (42);
     bypassButton.setBounds (headerZone.removeFromRight (92).withSizeKeepingCentre (92, 26));
-    headerZone.removeFromRight (8);
+    headerZone.removeFromRight (2);
     wetCompButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
-    headerZone.removeFromRight (8);
+    headerZone.removeFromRight (2);
     polarityButton.setBounds (headerZone.removeFromRight (50).withSizeKeepingCentre (50, 26));
     area.removeFromTop (15);   // 12 px of clear space below the header rule -> matches the graph<->PRE/POST gap
 
@@ -1010,22 +1006,29 @@ void ConvoAudioProcessorEditor::resized()
 
     auto inner  = dropZone.reduced (10);
     auto header = inner.removeFromTop (26);
-    // header row: [ file name .......... ] [Presets] [◀][▶]  [Load IR...]
-    loadButton.setBounds (header.removeFromRight (92));
-    header.removeFromRight (10);
+    const int hRight = header.getRight(), hBottom = header.getBottom();
+    // top header row: [ Play ][ Baked/Raw ]  file name  [ Reverse ][ Norm IR ]  [ Presets ][◀][▶]
     nextPresetButton.setBounds (header.removeFromRight (26));
     header.removeFromRight (4);
     prevPresetButton.setBounds (header.removeFromRight (26));
     header.removeFromRight (4);
     presetButton.setBounds (header.removeFromRight (74));
-    header.removeFromRight (8);
-    playButton.setBounds (header.removeFromLeft (46));        // [Play] [Baked/Raw] on the left
+    header.removeFromRight (12);
+    irNormButton.setBounds (header.removeFromRight (82));    // Reverse + Norm IR inline, left of Presets
+    header.removeFromRight (6);
+    reverseButton.setBounds (header.removeFromRight (82));
+    header.removeFromRight (12);
+    playButton.setBounds (header.removeFromLeft (46));       // [Play] [Baked/Raw] on the left
     header.removeFromLeft (6);
     auditionSrcButton.setBounds (header.removeFromLeft (58));
     header.removeFromLeft (10);
     fileNameLabel.setBounds (header);
     inner.removeFromTop (10);   // match the 10 px gap between knob groups
     waveZone = inner;
+
+    // Load IR: directly underneath the Presets + arrows, same width, right-aligned
+    const int presetClusterW = 74 + 4 + 26 + 4 + 26;   // Presets + ◀ + ▶
+    loadButton.setBounds (hRight - presetClusterW, hBottom + 6, presetClusterW, 24);
 
     area.removeFromTop (10);
     auto row1 = area.removeFromTop (170);
@@ -1120,20 +1123,8 @@ void ConvoAudioProcessorEditor::resized()
 
     // Filter IR: inline with the FILTER caption, right side
     {
-        auto cap = filterPanel.reduced (10, 0).removeFromTop (24);
+        auto cap = filterPanel.reduced (10, 0).removeFromTop (24).translated(0,5);
         filterIRButton.setBounds (cap.removeFromRight (84).withSizeKeepingCentre (84, 20));
-    }
-    // Duck Pre: inline with the DUCKING caption, right side (pre/post-convolution routing)
-    {
-        auto cap = duckPanel.reduced (10, 0).removeFromTop (24);
-        duckPreButton.setBounds (cap.removeFromRight (62).withSizeKeepingCentre (62, 20));
-    }
-    // Reverse + Norm IR: LED text-buttons, bottom-left of the waveform, inline with each other
-    {
-        auto row = waveZone.reduced (8, 6).removeFromBottom (22);
-        reverseButton.setBounds (row.removeFromLeft (82));
-        row.removeFromLeft (6);
-        irNormButton.setBounds (row.removeFromLeft (82));
     }
 
     renderBackground();

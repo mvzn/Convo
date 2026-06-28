@@ -105,7 +105,6 @@ private:
     std::atomic<float>* duckParam     = nullptr;
     std::atomic<float>* duckRelParam  = nullptr;
     std::atomic<float>* gateParam     = nullptr;   // gated-reverb threshold on the wet (0 = off)
-    std::atomic<float>* duckPreParam  = nullptr;   // duck routing: pre-convolution (input) vs post (wet)
     std::atomic<float>* polarityParam = nullptr;   // invert the wet polarity
     std::atomic<float>* filterQParam  = nullptr;   // shared resonance/Q for the In HP/LP corners
     std::atomic<float>* irStartParam  = nullptr;   // IR head trim (fraction of length)

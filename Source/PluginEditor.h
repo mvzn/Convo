@@ -111,7 +111,6 @@ private:
     juce::TextButton   reverseButton { "Reverse" }, irNormButton { "Norm IR" };   // LED text-buttons on the waveform
     juce::ToggleButton filterIRButton { "Filter IR" },
                        wetCompButton { "Wet Comp" },
-                       duckPreButton { "Pre" },       // DUCKING caption: duck pre- vs post-convolution
                        polarityButton { juce::String::fromUTF8 ("\xC3\x98") },   // Ø — invert the wet polarity
                        bypassButton { "Bypass" };
 
@@ -120,7 +119,7 @@ private:
     std::unique_ptr<SliderAttachment> dryAtt, wetAtt, irGainAtt, toneAtt, inHPAtt, inLPAtt, filterQAtt,
                                       preDelayAtt, widthAtt, msBassAtt,
                                       duckAtt, duckRelAtt, gateAtt, fadeInAtt, decayAtt, taperAtt, stretchAtt, dampAtt;
-    std::unique_ptr<ButtonAttachment> reverseAtt, irNormAtt, filterIRAtt, wetCompAtt, duckPreAtt, polarityAtt, bypassAtt;
+    std::unique_ptr<ButtonAttachment> reverseAtt, irNormAtt, filterIRAtt, wetCompAtt, polarityAtt, bypassAtt;
     bool draggingOutput = false;   // dragging the Output fader line on the OUT meter
 
     // meters: shown values + slower-decaying peak-hold lines, with last-painted
