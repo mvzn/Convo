@@ -209,6 +209,11 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     // IR audition: Play (toggles audition on/off) + a source toggle (Baked = processed kernel,
     // Raw = original IR). The Play label reflects the live audition state, driven by the timer.
     playButton.setTooltip ("Audition the impulse response through the output (solos the IR)");
+    playButton.getProperties().set ("led", true);                         // LED style; lit while playing
+    playButton.getProperties().set ("litAmt", 0.0);                       // smoothly animated play/stop (timer)
+    playButton.setColour (juce::TextButton::buttonOnColourId, ConvoColours::mint);
+    playButton.setColour (juce::TextButton::textColourOnId,  ConvoColours::bg);
+    playButton.setColour (juce::TextButton::textColourOffId, ConvoColours::label);
     playButton.onClick = [this]
     {
         if (processor.isAuditioning()) processor.stopAudition();
@@ -216,9 +221,19 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     };
     auditionSrcButton.setTooltip ("Audition source — Baked: after all processing; Raw: the original IR");
     auditionSrcButton.setClickingTogglesState (true);
+    auditionSrcButton.getProperties().set ("led", true);
+    auditionSrcButton.getProperties().set ("litAmt", 1.0);   // always lit; the colour shows the source (copper = Baked, mint = Raw)
+    auditionSrcButton.setColour (juce::TextButton::buttonOnColourId, ConvoColours::copper);   // default Baked
+    auditionSrcButton.setColour (juce::TextButton::textColourOnId,  ConvoColours::bg);        // dark text on the lit cap, both states
+    auditionSrcButton.setColour (juce::TextButton::textColourOffId, ConvoColours::bg);
     auditionSrcButton.setToggleState (true, juce::dontSendNotification);   // default: Baked
     auditionSrcButton.onClick = [this]
-    { auditionSrcButton.setButtonText (auditionSrcButton.getToggleState() ? "Baked" : "Raw"); };
+    {
+        const bool baked = auditionSrcButton.getToggleState();
+        auditionSrcButton.setButtonText (baked ? "Baked" : "Raw");
+        auditionSrcButton.setColour (juce::TextButton::buttonOnColourId, baked ? ConvoColours::copper : ConvoColours::mint);
+        auditionSrcButton.repaint();
+    };
     addAndMakeVisible (playButton);
     addAndMakeVisible (auditionSrcButton);
 
@@ -1188,6 +1203,17 @@ void ConvoAudioProcessorEditor::timerCallback()
     {
         playShown = auditioning;
         playButton.setButtonText (auditioning ? "Stop" : "Play");
+    }
+    // smoothly crossfade the Play LED between stopped and playing; flip the text colour at the
+    // visual midpoint (via the toggle state) so the label stays readable through the fade
+    const float playTarget = auditioning ? 1.0f : 0.0f;
+    if (std::abs (playLit - playTarget) > 0.0015f)
+    {
+        playLit += (playTarget - playLit) * 0.3f;
+        if (std::abs (playLit - playTarget) < 0.02f) playLit = playTarget;
+        playButton.getProperties().set ("litAmt", playLit);
+        playButton.setToggleState (playLit > 0.5f, juce::dontSendNotification);
+        playButton.repaint();
     }
 
     const auto name = processor.getIRLibrary().getDisplayName();

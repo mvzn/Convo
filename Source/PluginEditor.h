@@ -94,6 +94,7 @@ private:
     juce::TextButton          playButton { "Play" };            // audition the IR through the output
     juce::TextButton          auditionSrcButton { "Baked" };    // audition source toggle: Baked / Raw
     bool                      playShown = false;                // last-painted audition state (timer-driven)
+    float                     playLit = 0.0f;                   // smooth play/stop LED crossfade (0..1)
     juce::String              lastFileName;
     int                       lastBakeGen = -1;
     bool                      fileOver = false;
