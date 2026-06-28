@@ -992,11 +992,20 @@ void ConvoAudioProcessorEditor::resized()
     auto area = getLocalBounds().reduced (14);
 
     headerZone = area.removeFromTop (42);
-    bypassButton.setBounds (headerZone.removeFromRight (92).withSizeKeepingCentre (92, 26));
-    headerZone.removeFromRight (2);
-    wetCompButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
-    headerZone.removeFromRight (2);
-    polarityButton.setBounds (headerZone.removeFromRight (50).withSizeKeepingCentre (50, 26));
+    // Size each toggle to its own content (label + LED chip) so the gap below actually controls the
+    // spacing. drawToggleButton right-justifies the label against the chip, so any extra button width
+    // becomes dead space on the LEFT — which is why fixed widths made the gaps look uncontrollable.
+    const juce::Font togFont (juce::FontOptions (14.0f));   // matches drawToggleButton's label font
+    const int togGap = 8;                                   // <-- spacing between Polarity / Wet Comp / Bypass
+    auto placeTog = [&] (juce::ToggleButton& tb)
+    {
+        const int w = juce::roundToInt (juce::GlyphArrangement::getStringWidth (togFont, tb.getButtonText())) + 36;
+        tb.setBounds (headerZone.removeFromRight (w).withSizeKeepingCentre (w, 26));
+        headerZone.removeFromRight (togGap);
+    };
+    placeTog (bypassButton);
+    placeTog (wetCompButton);
+    placeTog (polarityButton);
     area.removeFromTop (15);   // 12 px of clear space below the header rule -> matches the graph<->PRE/POST gap
 
     auto topRow = area.removeFromTop (168);
