@@ -337,43 +337,38 @@ void test_engine_selection()
     juce::AudioBuffer<float> baked;
     auto mk = [] (double sec) { return dcBuffer ((int) std::round (sec * kFs), 1.0f); };
 
-    auto s1 = mk (1.0);  expectTrue (eng.loadIR (s1, kFs, bp, baked) == 0,   "1.0 s IR -> latency 0 (short engine)");
-    auto s2 = mk (2.0);  expectTrue (eng.loadIR (s2, kFs, bp, baked) == 512, "2.0 s IR -> latency 512 (long engine)");
-    auto sb = mk (1.5);  expectTrue (eng.loadIR (sb, kFs, bp, baked) == 512, "exactly 1.5 s (threshold) -> 512");
+    // both engines are zero-latency now (short = uniform zero-delay; long = non-uniform
+    // with the tail latency internally compensated), so every IR length reports latency 0
+    auto s1 = mk (1.0);  expectTrue (eng.loadIR (s1, kFs, bp, baked) == 0, "1.0 s IR -> latency 0 (short engine)");
+    auto s2 = mk (2.0);  expectTrue (eng.loadIR (s2, kFs, bp, baked) == 0, "2.0 s IR -> latency 0 (long non-uniform engine)");
+    auto sb = mk (1.5);  expectTrue (eng.loadIR (sb, kFs, bp, baked) == 0, "exactly 1.5 s (threshold) -> 0");
     auto su = dcBuffer ((int) std::round (1.5 * kFs) - 1, 1.0f);
     expectTrue (eng.loadIR (su, kFs, bp, baked) == 0, "just under 1.5 s -> 0");
     expectTrue (eng.getLatencySamples() == 0, "getLatencySamples() matches last selection");
 }
 
 // =========================================================================
-// loadIR — real latency tracks the host block size  (archetype: latency)
-// juce::dsp::Convolution's non-zero-latency engine actually reports
-// nextPowerOfTwo (max (blockSize, requested)); Convo must publish that, not
-// the requested constant. The canary cross-checks our mirrored formula
-// against the live JUCE engine so a JUCE upgrade can't silently break it.
+// loadIR — long (non-uniform) engine stays zero-latency  (archetype: latency)
+// The long engine is a juce::dsp::Convolution::NonUniform partition: a small
+// zero-latency head + a large-block tail whose internal latency JUCE compensates,
+// so getLatency() is 0 regardless of host block size. The canary cross-checks the
+// live JUCE engine so a JUCE upgrade that reintroduced latency fails loudly.
 // =========================================================================
-void test_engine_latency_tracks_blocksize()
+void test_engine_zero_latency()
 {
-    std::printf ("\n== engine latency vs block size ==\n");
+    std::printf ("\n== long engine: zero latency (non-uniform) ==\n");
     ConvolutionEngine eng;
-    juce::dsp::ProcessSpec spec { kFs, 2048, 1 };
+    juce::dsp::ProcessSpec spec { kFs, 2048, 1 };   // large block: a uniform long engine would report 2048
     eng.prepare (spec);
 
-    expectTrue (ConvolutionEngine::longEngineLatencyForBlockSize (2048) == 2048,
-                "formula: block 2048 -> latency 2048");
-    expectTrue (ConvolutionEngine::longEngineLatencyForBlockSize (768) == 1024,
-                "formula: block 768 -> latency 1024 (next pow2)");
-    expectTrue (ConvolutionEngine::longEngineLatencyForBlockSize (128) == 512,
-                "formula: small blocks -> requested 512");
-
-    expectTrue (eng.getJuceReportedLongLatency() == 2048,
-                "canary: JUCE engine agrees with the mirrored formula @ 2048");
+    expectTrue (eng.getJuceReportedLongLatency() == 0,
+                "canary: JUCE non-uniform engine reports 0 latency @ block 2048");
 
     auto bp = plainBake();
     juce::AudioBuffer<float> baked;
     auto ir = dcBuffer ((int) std::round (2.0 * kFs), 1.0f);
-    expectTrue (eng.loadIR (ir, kFs, bp, baked) == 2048,
-                "2.0 s IR @ block 2048 -> published latency 2048");
+    expectTrue (eng.loadIR (ir, kFs, bp, baked) == 0,
+                "2.0 s IR @ block 2048 -> published latency 0");
 }
 
 // =========================================================================
@@ -560,14 +555,16 @@ void test_irlibrary_cap()
     std::printf ("\n== IRLibrary: decode cap ==\n");
     constexpr double sr = 8000.0;   // small rate keeps the test file tiny
 
-    // 35 s file -> truncated to kMaxSeconds (30 s)
+    // no musical length cap: a long (35 s) file loads in full, not truncated. The 30 s cap
+    // is gone — only a generous safety ceiling (kMaxSeconds) remains for pathological files.
+    expectTrue (IRLibrary::kMaxSeconds >= 300.0, "safety ceiling is generous (>= 5 min)");
+
     const auto longFile = writeTestWav ("convo_test_35s.wav", 1, sr, (int) (35.0 * sr));
     IRLibrary lib;
     expectTrue (longFile.existsAsFile() && lib.loadFile (longFile), "35 s wav loads");
-    expectTrue (lib.getIR().getNumSamples() == (int) (IRLibrary::kMaxSeconds * sr),
-                "decode stops at kMaxSeconds (30 s)");
-    expectTrue (lib.wasTruncated(), "truncation is flagged");
-    expectTrue (lib.getDisplayName().contains ("truncated"), "display name mentions truncation");
+    expectTrue (lib.getIR().getNumSamples() == (int) (35.0 * sr),
+                "35 s file keeps full length (no 30 s truncation)");
+    expectTrue (! lib.wasTruncated(), "long file is not flagged as truncated");
 
     // short file -> untouched, not flagged
     const auto shortFile = writeTestWav ("convo_test_1s.wav", 1, sr, (int) sr);
@@ -841,7 +838,7 @@ int main()
     test_softclip();
     test_autolevel_tames_hot_ir();
     test_engine_selection();
-    test_engine_latency_tracks_blocksize();
+    test_engine_zero_latency();
     test_transition_no_passthrough();
     test_process_silence_unloaded();
     test_tilt_response();

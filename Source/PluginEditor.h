@@ -7,11 +7,13 @@
 #include <memory>
 
 /**
-    Convo's editor. All chrome that never changes between frames (panels, captions,
-    title, meter wells) is rendered once into a cached image on resize; the waveform
-    is rendered into its own cached image only when the bake changes. paint() then
-    just blits and draws the few dynamic bits, and the 30 Hz timer repaints nothing
-    unless a meter value actually moved — the editor idles at ~zero paint cost.
+    Convo's editor. The heavy static chrome graphics (panels, meter wells, ticks, rules)
+    are rendered once into a cached image on resize; the waveform is rendered into its own
+    cached image only when the bake changes. Static chrome *text* (title, captions, meter
+    labels) is drawn live in paint() — baking it into the scaled cache softens glyphs on
+    HiDPI displays. paint() blits the caches, draws that text, then the few dynamic bits;
+    the 30 Hz timer repaints nothing unless a meter value actually moved, so the editor
+    idles at ~zero paint cost.
 */
 class ConvoAudioProcessorEditor : public juce::AudioProcessorEditor,
                                   public juce::FileDragAndDropTarget,
@@ -54,7 +56,8 @@ private:
     void loadPresetFile (const juce::File& file);
     void promptSavePreset();               // async name prompt -> processor.savePreset
 
-    void renderBackground();           // static chrome -> backgroundImage
+    void renderBackground();           // static chrome graphics -> backgroundImage
+    void drawChromeText (juce::Graphics&);   // static chrome text, drawn live for HiDPI crispness
     void renderWaveImage();            // full-IR waveform -> waveImage (the trim backdrop)
     void renderKernelImage();          // trimmed+shaped kernel -> kernelImage (the selection layer)
     float irGainVisualGain() const;    // IR Gain as a linear factor -> waveform vertical zoom

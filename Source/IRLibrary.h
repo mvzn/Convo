@@ -10,10 +10,11 @@
     taper) happens later, in ConvolutionEngine, against this raw buffer. There is no
     note addressing or transposition here (that lived in Convsyn).
 
-    Decoding is bounded: at most kMaxSeconds of audio and 2 channels are read (the
-    convolution only ever uses two), so a dropped multi-hour file can't exhaust
-    memory. Longer files are truncated, not rejected — a song is still usable as a
-    sound-design IR.
+    Decoding reads at most 2 channels (the convolution only ever uses two). There is
+    no musical length cap: long songs load in full so they work as sound-design IRs
+    (the non-uniform convolution engine keeps long IRs cheap). Only a generous safety
+    ceiling (kMaxSeconds) guards against a dropped multi-hour file exhausting memory /
+    overflowing the 32-bit sample count; such an extreme file is truncated, not rejected.
 */
 class IRLibrary
 {
@@ -32,14 +33,18 @@ public:
     const juce::File& getCurrentFile() const noexcept { return currentFile; }
     juce::String getDisplayName() const;
 
-    /** True if the current IR was cut off at kMaxSeconds while decoding. */
+    /** True if the current IR hit the kMaxSeconds safety ceiling while decoding
+        (only ever a pathological multi-hour file — normal IRs and songs load whole). */
     bool wasTruncated() const noexcept { return truncated; }
 
     /** True if a registered decoder handles this file's extension — can never
         drift from the formats that are actually available. */
     bool isSupported (const juce::File& file) const;
 
-    static constexpr double kMaxSeconds = 30.0;   // decode cap (per channel, at file rate)
+    // Safety ceiling only — not a musical limit. 10 min is far above any real IR or song,
+    // stays well inside the 32-bit AudioBuffer sample count at every supported rate, and
+    // bounds the worst-case decode allocation. Realistic IRs never reach it.
+    static constexpr double kMaxSeconds = 600.0;
 
 private:
     juce::AudioFormatManager formatManager;

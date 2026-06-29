@@ -57,9 +57,16 @@ struct IRBakeParams
     Owns two persistent juce::dsp::Convolution engines and switches between them
     adaptively based on IR length:
 
-      - short IRs (< kThresholdSeconds)  -> zero-latency engine
-      - long  IRs (>= kThresholdSeconds) -> low-CPU engine (head latency depends on
-        both kLongLatency and the host block size — see longEngineLatencyForBlockSize()).
+      - short IRs (< kThresholdSeconds)  -> zero-latency uniform engine (cheap for a
+        handful of partitions)
+      - long  IRs (>= kThresholdSeconds) -> zero-latency NON-UNIFORM partitioned engine
+        (kHeadSize head). A small zero-latency head covers the IR onset while the bulk of
+        the tail is convolved in large blocks — far cheaper than running the whole long IR
+        through the zero-latency uniform engine. JUCE's NonUniform mode compensates the
+        tail's internal latency, so the engine reports ZERO latency for any IR length.
+
+    Both engines are therefore zero-latency: the plugin reports no latency regardless of
+    which engine is live, and the dry tap needs no alignment delay.
 
     juce::dsp::Convolution loads kernels ASYNCHRONOUSLY (a background thread builds
     the FFT segments, the audio thread installs them mid-process). Reloading the
@@ -118,20 +125,13 @@ public:
     static juce::AudioBuffer<float> bake (const juce::AudioBuffer<float>& raw, double irSampleRate,
                                           const IRBakeParams& bp);
 
-    /** The real head latency of the long engine for a given host block size.
-        Mirrors juce::dsp::Convolution (8.0.6): nextPowerOfTwo (max (blockSize,
-        requested latency)). The unit test cross-checks this against the live
-        engine so a JUCE upgrade that changes the rule fails loudly. */
-    static int longEngineLatencyForBlockSize (int blockSize) noexcept
-    {
-        return juce::nextPowerOfTwo (juce::jmax (blockSize, kLongLatency));
-    }
-
-    /** Test canary only: the latency JUCE itself reports for the long engine. */
+    /** Test canary only: the latency JUCE reports for the long (non-uniform) engine.
+        Must stay 0 — NonUniform compensates the tail latency. Cross-checked against the
+        live engine so a JUCE upgrade that changes the rule fails loudly. */
     int getJuceReportedLongLatency() const { return longEngine.getLatency(); }
 
-    static constexpr int    kLongLatency      = 512; // requested long-engine latency, samples
-    static constexpr double kThresholdSeconds = 1.5; // raw-length boundary between engines
+    static constexpr int    kHeadSize         = 1024; // non-uniform head partition, samples
+    static constexpr double kThresholdSeconds = 1.5;  // raw-length boundary between engines
 
 private:
     juce::dsp::Convolution&       engineAt (int index)       noexcept { return index == 1 ? longEngine : shortEngine; }
@@ -144,8 +144,8 @@ private:
         juce_Convolution.cpp's resampleImpulseResponse length). */
     static int expectedKernelSize (int bakedLen, double irSampleRate, double engineSampleRate) noexcept;
 
-    juce::dsp::Convolution shortEngine { juce::dsp::Convolution::Latency { 0 } };
-    juce::dsp::Convolution longEngine  { juce::dsp::Convolution::Latency { kLongLatency } };
+    juce::dsp::Convolution shortEngine { juce::dsp::Convolution::Latency   { 0 } };
+    juce::dsp::Convolution longEngine  { juce::dsp::Convolution::NonUniform { kHeadSize } };
 
     // --- message-thread bookkeeping ---
     int    targetEngine   = 0;                 // engine that is (or will become) audible

@@ -17,6 +17,13 @@ namespace
         return juce::Font (juce::FontOptions (11.0f, juce::Font::bold)).withExtraKerningFactor (0.12f);
     }
 
+    // The caption row of a panel (mint tick + label sit here). Shared so the baked tick
+    // (renderBackground) and the live-drawn label (drawChromeText) stay pixel-aligned.
+    juce::Rectangle<int> captionStrip (juce::Rectangle<int> panel)
+    {
+        return panel.reduced (12, 0).removeFromTop (24).translated (0, 3);
+    }
+
     const juce::Colour meterAmber { 0xffd9a13b };
 }
 
@@ -381,22 +388,14 @@ void ConvoAudioProcessorEditor::renderBackground()
                                              juce::Colour (0xff0b1013), 0.0f, (float) getHeight(), false));
     g.fillAll();
 
-    // header: wordmark + dim tagline + hairline rule
+    // header: wordmark + dim tagline (both drawn live in drawChromeText for crisp text) +
+    // mint tick + hairline rule (baked here — graphics scale cleanly)
     {
         auto h = headerZone;
-        g.setColour (ConvoColours::text);
-        g.setFont (juce::Font (juce::FontOptions (26.0f, juce::Font::bold)));
-        const auto title = juce::String ("Convo");
-        // nudge the wordmark up a few px: the 26 pt bold's large descent makes box-centred
-        // text sit visually low next to the small-caps tagline / toggle row
-        g.drawText (title, h.removeFromLeft (92).translated (0, -2), juce::Justification::centredLeft);
+        h.removeFromLeft (92);   // reserve the wordmark column so the tick lands beside it
 
         g.setColour (ConvoColours::mint.withAlpha (0.85f));
         g.fillRect (h.getX() + 2, headerZone.getCentreY() - 8, 2, 16);
-
-        g.setColour (ConvoColours::textDim);
-        g.setFont (captionFont());
-        g.drawText ("CONVOLUTION", h.withTrimmedLeft (12), juce::Justification::centredLeft);
 
         // engraved header rule: a dark cut + a 1 px catch-light just below, so the divider reads
         // as incised into the chassis (spans the full content width)
@@ -423,14 +422,11 @@ void ConvoAudioProcessorEditor::renderBackground()
         g.setColour (ConvoColours::border);
         g.drawRoundedRectangle (r.toFloat(), 6.0f, 1.0f);
 
-        if (caption.isNotEmpty())
+        if (caption.isNotEmpty())   // mint tick baked here; the label is drawn live in drawChromeText
         {
-            auto strip = r.reduced (12, 0).removeFromTop (24).translated(0, 3);
+            auto strip = captionStrip (r);
             g.setColour (ConvoColours::mint.withAlpha (0.85f));
             g.fillRect (strip.getX(), strip.getCentreY() - 5, 3, 10);
-            g.setColour (ConvoColours::textDim);
-            g.setFont (captionFont());
-            g.drawText (caption, strip.withTrimmedLeft (10), juce::Justification::centredLeft);
         }
     };
 
@@ -457,8 +453,40 @@ void ConvoAudioProcessorEditor::renderBackground()
             g.fillRect (zone.getX() + 2, y, zone.getWidth() - 4, 1);
         }
     }
+    // IN / OUT labels are drawn live in drawChromeText (crisp text)
+}
+
+// All static chrome *text* is drawn here, live in paint() at the editor's true device
+// resolution, rather than baked into the (scaled) backgroundImage — baking softens glyphs
+// on HiDPI/fractional-scale displays. Cheap (a handful of short strings) and clipped to the
+// repaint region, so the cached-graphics optimisation is untouched.
+void ConvoAudioProcessorEditor::drawChromeText (juce::Graphics& g)
+{
+    // header wordmark + tagline
+    {
+        auto h = headerZone;
+        g.setColour (ConvoColours::text);
+        g.setFont (juce::Font (juce::FontOptions (26.0f, juce::Font::bold)));
+        // nudge the wordmark up a few px: the 26 pt bold's large descent makes box-centred
+        // text sit visually low next to the small-caps tagline / toggle row
+        g.drawText ("Convo", h.removeFromLeft (92).translated (0, -2), juce::Justification::centredLeft);
+
+        g.setColour (ConvoColours::textDim);
+        g.setFont (captionFont());
+        g.drawText ("CONVOLUTION", h.withTrimmedLeft (12), juce::Justification::centredLeft);
+    }
+
+    // panel captions (mint ticks are baked; only the labels are live)
     g.setColour (ConvoColours::textDim);
     g.setFont (captionFont());
+    const std::pair<juce::Rectangle<int>, const char*> panels[] = {
+        { filterPanel, "FILTER" }, { postPanel, "POST" }, { volumePanel, "VOLUME" },
+        { duckPanel, "DUCKING" }, { shapePanel, "IR SHAPE" }, { charPanel, "IR CHARACTER" }
+    };
+    for (const auto& pc : panels)
+        g.drawText (pc.second, captionStrip (pc.first).withTrimmedLeft (10), juce::Justification::centredLeft);
+
+    // meter labels
     g.drawText ("IN",  inMeterZone.getX(),  inMeterZone.getBottom() + 2,  inMeterZone.getWidth(),  14, juce::Justification::centred);
     g.drawText ("OUT", outMeterZone.getX(), outMeterZone.getBottom() + 2, outMeterZone.getWidth(), 14, juce::Justification::centred);
 }
@@ -898,6 +926,8 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
         g.drawImage (backgroundImage, getLocalBounds().toFloat());
     else
         g.fillAll (ConvoColours::bg);
+
+    drawChromeText (g);   // static chrome text, live for crispness (clipped to the repaint region)
 
     const auto clip = g.getClipBounds();
 

@@ -32,10 +32,13 @@ void ConvolutionEngine::reset()
     longEngine.reset();
 }
 
-int ConvolutionEngine::computeLatency (int engineIndex) const noexcept
+int ConvolutionEngine::computeLatency (int /*engineIndex*/) const noexcept
 {
-    return engineIndex == 1 ? longEngineLatencyForBlockSize (juce::jmax (1, maxBlockSize))
-                            : 0;
+    // Both engines are zero-latency: the short engine is JUCE's zero-latency uniform
+    // partition; the long engine is a non-uniform partition whose head is also
+    // zero-latency (JUCE compensates the tail's internal latency). The plugin therefore
+    // reports no latency for any IR length.
+    return 0;
 }
 
 int ConvolutionEngine::expectedKernelSize (int bakedLen, double irSampleRate, double engineSampleRate) noexcept
