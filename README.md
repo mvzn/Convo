@@ -1,7 +1,7 @@
 # Convo
 
 A simple, MIDI-free **convolution audio effect**. Drop an impulse response, hear your
-signal convolved with it. Open-source (MIT).
+signal convolved with it. Free and open source (AGPLv3).
 
 Convo is the stripped-down sibling of *Convsyn*: same convolution/IR core, none of the
 synth machinery (no MIDI, no ADSR, no transposition) — just a focused convolver with
@@ -71,4 +71,9 @@ debuggable but real-time-capable build use `-DCMAKE_BUILD_TYPE=RelWithDebInfo`; 
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+**GNU AGPLv3** — © 2026 mvzn. See [LICENSE](LICENSE).
+
+Convo is built with [JUCE](https://juce.com), used under its AGPLv3 option. JUCE is
+dual-licensed (AGPLv3 or commercial); distributing Convo as free open source under the
+AGPLv3 is what keeps it compliant without a paid JUCE licence. Any work that links this
+code is therefore also bound by the AGPLv3.
