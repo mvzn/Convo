@@ -17,6 +17,13 @@ namespace
         return juce::Font (juce::FontOptions (11.0f, juce::Font::bold)).withExtraKerningFactor (0.12f);
     }
 
+    // The caption row of a panel (mint tick + label sit here). Shared so the baked tick
+    // (renderBackground) and the live-drawn label (drawChromeText) stay pixel-aligned.
+    juce::Rectangle<int> captionStrip (juce::Rectangle<int> panel)
+    {
+        return panel.reduced (12, 0).removeFromTop (24).translated (0, 3);
+    }
+
     const juce::Colour meterAmber { 0xffd9a13b };
 }
 
@@ -46,33 +53,41 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setup (drySlider,      dryLabel,      "Dry");
     setup (wetSlider,      wetLabel,      "Wet");
     setup (irGainSlider,   irGainLabel,   "IR Gain");
-    setup (outputSlider,   outputLabel,   "Output");
     setup (toneSlider,     toneLabel,     "Tone");
     setup (inHPSlider,     inHPLabel,     "In HP");
     setup (inLPSlider,     inLPLabel,     "In LP");
+    setup (filterQSlider,  filterQLabel,  "Q");
     setup (preDelaySlider, preDelayLabel, "Pre-Delay");
     setup (widthSlider,    widthLabel,    "Width");
     setup (msBassSlider,   msBassLabel,   "Bass Mono");
     setup (duckSlider,     duckLabel,     "Duck");
     setup (duckRelSlider,  duckRelLabel,  "Release");
+    setup (gateSlider,     gateLabel,     "Gate");
     setup (fadeInSlider,   fadeInLabel,   "Fade In");
     setup (decaySlider,    decayLabel,    "Decay");
     setup (taperSlider,    taperLabel,    "Taper");
     setup (stretchSlider,  stretchLabel,  "Stretch");
     setup (dampSlider,     dampLabel,     "Damp");
 
-    reverseButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);    // green = active
     wetCompButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);
     filterIRButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);   // orange = IR-baked filter
-    irNormButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::mint);
+    polarityButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::mint);
     bypassButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::copper);
+    polarityButton.setTooltip ("Invert the polarity (phase) of the wet signal");
+
+    // Reverse + Norm IR: plain buttons; the text colour (grey off -> mint on) shows state, animated
+    for (auto* b : { &reverseButton, &irNormButton })
+    {
+        b->setClickingTogglesState (true);
+        addAndMakeVisible (*b);
+    }
     irNormButton.setTooltip   ("Normalize the IR to unit energy. Off (default) = the IR's raw "
                                "recorded level, which can convolve hot on dense material");
     wetCompButton.setTooltip  ("Adaptive wet gain compensation: tracks the dry input level "
                                "and trims the wet to match; frozen while the input is quiet "
                                "so tails ring out");
-    inHPSlider.setTooltip ("Pre-IR high-pass (low cut), 6 dB/oct, on the signal feeding the IR");
-    inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 6 dB/oct, on the signal feeding the IR");
+    inHPSlider.setTooltip ("Pre-IR high-pass (low cut), 12 dB/oct, on the signal feeding the IR");
+    inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 12 dB/oct, on the signal feeding the IR");
     fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp is capped at 80% of the IR length");
     msBassSlider.setTooltip ("Bass Mono crossover: the wet collapses to mono below this frequency "
                              "and stays stereo above it. 20 Hz = off; turn it up to engage Bass Mono");
@@ -85,7 +100,10 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     wetSlider.setTooltip    ("Level of the convolved (wet) signal in the mix");
     irGainSlider.setTooltip ("Gain of the impulse response itself (scales the wet convolution, "
                              "and the waveform height above). Separate from Wet (the wet mix level)");
-    outputSlider.setTooltip ("Final output trim, applied after the dry/wet mix");
+    gateSlider.setTooltip    ("Gate on the dry signal feeding the IR: cuts the convolution input when the "
+                              "input drops below the threshold (the tail still rings out). Release = Duck Release. 0% = off");
+    gateSlider.getProperties().set ("gateAct", 0.0);   // marks this as the Gate knob (grey arc -> mint when active)
+    filterQSlider.setTooltip ("Resonance/Q for the In HP & In LP corners: 0% = flat, up = a resonant peak at the cutoffs");
 
     // --- wet shaping (post-convolution, real-time) ---
     toneSlider.setTooltip     ("Spectral tilt on the wet: turn down to darken (lows up, highs down), "
@@ -109,11 +127,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     // --- output guards / global ---
     bypassButton.setTooltip    ("Passes the dry input through at unity");
-    loadButton.setTooltip      ("Load an impulse response (.wav / .aif / .aiff / .ogg / .flac). "
-                                "You can also drag a file onto the display");
 
-    for (auto* b : { &reverseButton, &irNormButton, &filterIRButton,
-                     &wetCompButton, &bypassButton })
+    for (auto* b : { &filterIRButton, &wetCompButton, &polarityButton, &bypassButton })
     {
         b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
         addAndMakeVisible (*b);
@@ -122,7 +137,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     dryAtt      = std::make_unique<SliderAttachment> (apvts, "dry",         drySlider);
     wetAtt      = std::make_unique<SliderAttachment> (apvts, "wet",         wetSlider);
     irGainAtt   = std::make_unique<SliderAttachment> (apvts, "irGain",      irGainSlider);
-    outputAtt   = std::make_unique<SliderAttachment> (apvts, "output",      outputSlider);
+    filterQAtt  = std::make_unique<SliderAttachment> (apvts, "filterQ",     filterQSlider);
+    gateAtt     = std::make_unique<SliderAttachment> (apvts, "gate",        gateSlider);
     toneAtt     = std::make_unique<SliderAttachment> (apvts, "tone",        toneSlider);
     inHPAtt     = std::make_unique<SliderAttachment> (apvts, "inHP",        inHPSlider);
     inLPAtt     = std::make_unique<SliderAttachment> (apvts, "inLP",        inLPSlider);
@@ -140,6 +156,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     irNormAtt    = std::make_unique<ButtonAttachment> (apvts, "irNorm",    irNormButton);
     filterIRAtt  = std::make_unique<ButtonAttachment> (apvts, "filterIR",  filterIRButton);
     wetCompAtt   = std::make_unique<ButtonAttachment> (apvts, "wetComp",   wetCompButton);
+    polarityAtt  = std::make_unique<ButtonAttachment> (apvts, "polarity",  polarityButton);
     bypassAtt    = std::make_unique<ButtonAttachment> (apvts, "bypass",    bypassButton);
 
     // show the unit on each knob's value box (dB / Hz / ms / %). The slider attachment points
@@ -148,7 +165,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     // "Off" / "... ms") so nothing gets doubled.
     struct { juce::Slider* s; const char* id; } unitSliders[] = {
         { &drySlider, "dry" }, { &wetSlider, "wet" }, { &irGainSlider, "irGain" },
-        { &outputSlider, "output" }, { &toneSlider, "tone" }, { &inHPSlider, "inHP" },
+        { &toneSlider, "tone" }, { &inHPSlider, "inHP" }, { &filterQSlider, "filterQ" }, { &gateSlider, "gate" },
         { &inLPSlider, "inLP" }, { &preDelaySlider, "preDelay" }, { &widthSlider, "width" },
         { &msBassSlider, "msBass" }, { &duckSlider, "duck" }, { &duckRelSlider, "duckRelease" },
         { &fadeInSlider, "fadeIn" }, { &decaySlider, "decay" }, { &taperSlider, "taper" },
@@ -177,9 +194,6 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     fileNameLabel.setJustificationType (juce::Justification::centredLeft);
     addAndMakeVisible (fileNameLabel);
 
-    loadButton.onClick = [this] { openFileChooser(); };
-    addAndMakeVisible (loadButton);
-
     presetButton.setTooltip     ("Save the current settings as a preset, or pick a saved one");
     prevPresetButton.setTooltip ("Previous preset");
     nextPresetButton.setTooltip ("Next preset");
@@ -193,6 +207,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     // IR audition: Play (toggles audition on/off) + a source toggle (Baked = processed kernel,
     // Raw = original IR). The Play label reflects the live audition state, driven by the timer.
     playButton.setTooltip ("Audition the impulse response through the output (solos the IR)");
+    // Play: text colour goes grey -> mint while playing (animated); the button itself stays plain
     playButton.onClick = [this]
     {
         if (processor.isAuditioning()) processor.stopAudition();
@@ -200,16 +215,23 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     };
     auditionSrcButton.setTooltip ("Audition source — Baked: after all processing; Raw: the original IR");
     auditionSrcButton.setClickingTogglesState (true);
-    auditionSrcButton.getProperties().set ("led", true);                          // lit body when on (Baked)
-    auditionSrcButton.setColour (juce::TextButton::buttonOnColourId, ConvoColours::mint);
-    auditionSrcButton.setColour (juce::TextButton::textColourOnId,  ConvoColours::bg);      // dark text on the lit cap
-    auditionSrcButton.setColour (juce::TextButton::textColourOffId, ConvoColours::label);   // dim text when unlit (Raw)
-    auditionSrcButton.setToggleState (false, juce::dontSendNotification);          // default: Raw (unlit)
-    auditionSrcButton.setButtonText ("Raw");
-    auditionSrcButton.onClick = [this]
+    auditionSrcButton.setToggleState (true, juce::dontSendNotification);   // default: Baked
+    auditionSrcButton.onClick = [this]   // text colour crossfades mint (Raw) <-> copper (Baked) in the timer
     { auditionSrcButton.setButtonText (auditionSrcButton.getToggleState() ? "Baked" : "Raw"); };
+    // Play + Baked/Raw form one segmented pill (joined visuals, separate clicks)
+    playButton.getProperties().set        ("segment", "left");
+    auditionSrcButton.getProperties().set ("segment", "right");
     addAndMakeVisible (playButton);
     addAndMakeVisible (auditionSrcButton);
+
+    // seed the animated text colours so on-state buttons start coloured (not grey) at open
+    reverseLit = reverseButton.getToggleState() ? 1.0f : 0.0f;
+    normLit    = irNormButton.getToggleState()  ? 1.0f : 0.0f;
+    bakedBlend = auditionSrcButton.getToggleState() ? 1.0f : 0.0f;
+    setLedTextColour (playButton,        playLit,    ConvoColours::label, ConvoColours::mint);
+    setLedTextColour (reverseButton,     reverseLit, ConvoColours::label, ConvoColours::mint);
+    setLedTextColour (irNormButton,      normLit,    ConvoColours::label, ConvoColours::mint);
+    setLedTextColour (auditionSrcButton, bakedBlend, ConvoColours::mint,  ConvoColours::copper);
 
     rebuildThumbnail();
 
@@ -366,22 +388,14 @@ void ConvoAudioProcessorEditor::renderBackground()
                                              juce::Colour (0xff0b1013), 0.0f, (float) getHeight(), false));
     g.fillAll();
 
-    // header: wordmark + dim tagline + hairline rule
+    // header: wordmark + dim tagline (both drawn live in drawChromeText for crisp text) +
+    // mint tick + hairline rule (baked here — graphics scale cleanly)
     {
         auto h = headerZone;
-        g.setColour (ConvoColours::text);
-        g.setFont (juce::Font (juce::FontOptions (26.0f, juce::Font::bold)));
-        const auto title = juce::String ("Convo");
-        // nudge the wordmark up a few px: the 26 pt bold's large descent makes box-centred
-        // text sit visually low next to the small-caps tagline / toggle row
-        g.drawText (title, h.removeFromLeft (92).translated (0, -2), juce::Justification::centredLeft);
+        h.removeFromLeft (92);   // reserve the wordmark column so the tick lands beside it
 
         g.setColour (ConvoColours::mint.withAlpha (0.85f));
         g.fillRect (h.getX() + 2, headerZone.getCentreY() - 8, 2, 16);
-
-        g.setColour (ConvoColours::textDim);
-        g.setFont (captionFont());
-        g.drawText ("CONVOLUTION", h.withTrimmedLeft (12), juce::Justification::centredLeft);
 
         // engraved header rule: a dark cut + a 1 px catch-light just below, so the divider reads
         // as incised into the chassis (spans the full content width)
@@ -408,14 +422,11 @@ void ConvoAudioProcessorEditor::renderBackground()
         g.setColour (ConvoColours::border);
         g.drawRoundedRectangle (r.toFloat(), 6.0f, 1.0f);
 
-        if (caption.isNotEmpty())
+        if (caption.isNotEmpty())   // mint tick baked here; the label is drawn live in drawChromeText
         {
-            auto strip = r.reduced (12, 0).removeFromTop (24);
+            auto strip = captionStrip (r);
             g.setColour (ConvoColours::mint.withAlpha (0.85f));
             g.fillRect (strip.getX(), strip.getCentreY() - 5, 3, 10);
-            g.setColour (ConvoColours::textDim);
-            g.setFont (captionFont());
-            g.drawText (caption, strip.withTrimmedLeft (10), juce::Justification::centredLeft);
         }
     };
 
@@ -442,8 +453,40 @@ void ConvoAudioProcessorEditor::renderBackground()
             g.fillRect (zone.getX() + 2, y, zone.getWidth() - 4, 1);
         }
     }
+    // IN / OUT labels are drawn live in drawChromeText (crisp text)
+}
+
+// All static chrome *text* is drawn here, live in paint() at the editor's true device
+// resolution, rather than baked into the (scaled) backgroundImage — baking softens glyphs
+// on HiDPI/fractional-scale displays. Cheap (a handful of short strings) and clipped to the
+// repaint region, so the cached-graphics optimisation is untouched.
+void ConvoAudioProcessorEditor::drawChromeText (juce::Graphics& g)
+{
+    // header wordmark + tagline
+    {
+        auto h = headerZone;
+        g.setColour (ConvoColours::text);
+        g.setFont (juce::Font (juce::FontOptions (26.0f, juce::Font::bold)));
+        // nudge the wordmark up a few px: the 26 pt bold's large descent makes box-centred
+        // text sit visually low next to the small-caps tagline / toggle row
+        g.drawText ("Convo", h.removeFromLeft (92).translated (0, -2), juce::Justification::centredLeft);
+
+        g.setColour (ConvoColours::textDim);
+        g.setFont (captionFont());
+        g.drawText ("CONVOLUTION", h.withTrimmedLeft (12), juce::Justification::centredLeft);
+    }
+
+    // panel captions (mint ticks are baked; only the labels are live)
     g.setColour (ConvoColours::textDim);
     g.setFont (captionFont());
+    const std::pair<juce::Rectangle<int>, const char*> panels[] = {
+        { filterPanel, "FILTER" }, { postPanel, "POST" }, { volumePanel, "VOLUME" },
+        { duckPanel, "DUCKING" }, { shapePanel, "IR SHAPE" }, { charPanel, "IR CHARACTER" }
+    };
+    for (const auto& pc : panels)
+        g.drawText (pc.second, captionStrip (pc.first).withTrimmedLeft (10), juce::Justification::centredLeft);
+
+    // meter labels
     g.drawText ("IN",  inMeterZone.getX(),  inMeterZone.getBottom() + 2,  inMeterZone.getWidth(),  14, juce::Justification::centred);
     g.drawText ("OUT", outMeterZone.getX(), outMeterZone.getBottom() + 2, outMeterZone.getWidth(), 14, juce::Justification::centred);
 }
@@ -502,18 +545,21 @@ void ConvoAudioProcessorEditor::renderOverlay()
     const float tiltDb = apvts.getRawParameterValue ("tone")->load() * 0.01f * 12.0f;   // matches processBlock
     const float hpHz   = apvts.getRawParameterValue ("inHP")->load();
     const float lpHz   = apvts.getRawParameterValue ("inLP")->load();
+    // shared resonance/Q, mapped exactly as the processor's mapFilterQ (0% = 0.707 .. 100% = 6.0)
+    const double fq = (double) juce::jmap (juce::jlimit (0.0f, 100.0f, apvts.getRawParameterValue ("filterQ")->load()) * 0.01f,
+                                           0.707f, 6.0f);
 
     if (eqLo == nullptr)   // allocate the reused coefficient objects once
     {
         eqLo = juce::dsp::IIR::Coefficients<float>::makeLowShelf  (sr, 700.0, 0.5, 1.0f);
         eqHi = juce::dsp::IIR::Coefficients<float>::makeHighShelf (sr, 700.0, 0.5, 1.0f);
-        eqHp = juce::dsp::IIR::Coefficients<float>::makeFirstOrderHighPass (sr, 20.0);
-        eqLp = juce::dsp::IIR::Coefficients<float>::makeFirstOrderLowPass  (sr, 20000.0);
+        eqHp = juce::dsp::IIR::Coefficients<float>::makeHighPass (sr, 20.0, 0.707);
+        eqLp = juce::dsp::IIR::Coefficients<float>::makeLowPass  (sr, 20000.0, 0.707);
     }
     *eqLo = juce::dsp::IIR::ArrayCoefficients<float>::makeLowShelf  (sr, 700.0, 0.5, juce::Decibels::decibelsToGain (-tiltDb));
     *eqHi = juce::dsp::IIR::ArrayCoefficients<float>::makeHighShelf (sr, 700.0, 0.5, juce::Decibels::decibelsToGain ( tiltDb));
-    *eqHp = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (sr, (double) hpHz);
-    *eqLp = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass  (sr, (double) lpHz);
+    *eqHp = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (sr, (double) hpHz, fq);
+    *eqLp = juce::dsp::IIR::ArrayCoefficients<float>::makeLowPass  (sr, (double) lpHz, fq);
 
     constexpr double fLo = 20.0, fHi = 20000.0;
     constexpr float  dbSpan = 15.0f;                 // +/- this maps to half the zone height
@@ -715,6 +761,31 @@ void ConvoAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    if (outMeterZone.expanded (6, 4).contains (e.getPosition()))   // the Output fader on the OUT meter
+    {
+        if (auto* op = processor.getAPVTS().getParameter ("output"))
+        {
+            if (e.getNumberOfClicks() >= 2)   // double-click -> reset to default (0 dB), like a knob
+            {
+                op->beginChangeGesture();
+                op->setValueNotifyingHost (op->getDefaultValue());
+                op->endChangeGesture();
+                repaint (outMeterZone.expanded (16, 16));
+                return;
+            }
+            draggingOutput = true;
+            op->beginChangeGesture();
+            setOutputFromMouseY ((float) e.getPosition().y);
+        }
+        return;
+    }
+
+    if (e.getNumberOfClicks() >= 2 && dropZone.contains (e.getPosition()))   // double-click the display to load an IR
+    {
+        openFileChooser();
+        return;
+    }
+
     activeHandle = trimHandleAt (e.getPosition());
     if (activeHandle != TrimHandle::none)
     {
@@ -732,6 +803,12 @@ void ConvoAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
 
 void ConvoAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
 {
+    if (draggingOutput)
+    {
+        setOutputFromMouseY ((float) e.getPosition().y);
+        return;
+    }
+
     if (activeHandle == TrimHandle::none)
         return;
 
@@ -747,6 +824,14 @@ void ConvoAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
 
 void ConvoAudioProcessorEditor::mouseUp (const juce::MouseEvent&)
 {
+    if (draggingOutput)
+    {
+        draggingOutput = false;
+        if (auto* op = processor.getAPVTS().getParameter ("output")) op->endChangeGesture();
+        repaint (outMeterZone.expanded (16, 16));
+        return;
+    }
+
     if (activeHandle != TrimHandle::none)
     {
         // commit the dragged value -> the single re-bake (audio kernel only) for this edit
@@ -763,6 +848,22 @@ void ConvoAudioProcessorEditor::mouseUp (const juce::MouseEvent&)
     }
 }
 
+void ConvoAudioProcessorEditor::setOutputFromMouseY (float y)
+{
+    const auto z = outMeterZone.toFloat();
+    const float v = juce::jlimit (0.0f, 1.0f, (z.getBottom() - y) / juce::jmax (1.0f, z.getHeight()));
+    if (auto* op = processor.getAPVTS().getParameter ("output"))
+        op->setValueNotifyingHost (v);
+    repaint (outMeterZone.expanded (16, 16));   // redraw the line + dB readout (and its overflow)
+}
+
+void ConvoAudioProcessorEditor::setLedTextColour (juce::Button& b, float amt, juce::Colour off, juce::Colour on)
+{
+    const auto c = off.interpolatedWith (on, juce::jlimit (0.0f, 1.0f, amt));   // both ids so it shows regardless of toggle
+    b.setColour (juce::TextButton::textColourOnId,  c);
+    b.setColour (juce::TextButton::textColourOffId, c);
+}
+
 void ConvoAudioProcessorEditor::showIRContextMenu()
 {
     auto& lib = processor.getIRLibrary();
@@ -771,6 +872,8 @@ void ConvoAudioProcessorEditor::showIRContextMenu()
     const bool hasIR   = lib.hasIR();
 
     juce::PopupMenu m;
+    m.addItem (5, "Load IR\xE2\x80\xA6", true, false);   // also: double-click the display
+    m.addSeparator();
     // a plugin can't drive the host's own browser, so this reveals the file in the OS file explorer
     m.addItem (1, "Reveal IR in file explorer", hasFile, false);
     m.addSeparator();
@@ -787,6 +890,7 @@ void ConvoAudioProcessorEditor::showIRContextMenu()
         {
             switch (r)
             {
+                case 5: openFileChooser();          break;
                 case 1: file.revealToUser();        break;
                 case 2: processor.startAudition (true);  break;
                 case 3: processor.startAudition (false); break;
@@ -822,6 +926,8 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
         g.drawImage (backgroundImage, getLocalBounds().toFloat());
     else
         g.fillAll (ConvoColours::bg);
+
+    drawChromeText (g);   // static chrome text, live for crispness (clipped to the repaint region)
 
     const auto clip = g.getClipBounds();
 
@@ -873,7 +979,7 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
         else
         {
             g.setColour (ConvoColours::textDim);
-            g.drawText ("Drop .wav / .aiff / .flac / .ogg here  (or click Load IR)",
+            g.drawText ("Drop .wav / .aiff / .flac / .ogg here  (or double-click to load)",
                         waveZone, juce::Justification::centred);
         }
 
@@ -888,8 +994,30 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
 
     if (clip.intersects (inMeterZone))
         drawMeterFill (g, inMeterZone, inMeter, inPeak, inMeterGrad);
-    if (clip.intersects (outMeterZone))
+    if (clip.intersects (outMeterZone.expanded (16, 16)))
+    {
         drawMeterFill (g, outMeterZone, outMeter, outPeak, outMeterGrad);
+
+        // Output control: a draggable horizontal fader line at the output-gain position, with the
+        // dB value sitting on top of it (replaces the old Output knob).
+        if (auto* op = processor.getAPVTS().getParameter ("output"))
+        {
+            const auto  z = outMeterZone.toFloat();
+            const float y = z.getBottom() - juce::jlimit (0.0f, 1.0f, op->getValue()) * z.getHeight();
+
+            g.setColour (juce::Colours::black.withAlpha (0.55f));
+            g.fillRect (z.getX() - 3.0f, y + 0.5f, z.getWidth() + 6.0f, 2.0f);    // drop shadow
+            g.setColour (draggingOutput ? ConvoColours::mint : ConvoColours::text);
+            g.fillRect (z.getX() - 3.0f, y - 1.0f, z.getWidth() + 6.0f, 2.0f);    // the fader line
+
+            auto pill = juce::Rectangle<float> (40.0f, 13.0f).withCentre ({ z.getCentreX(), y - 8.5f });
+            g.setColour (ConvoColours::panel.withAlpha (0.92f));
+            g.fillRoundedRectangle (pill, 3.0f);
+            g.setColour (draggingOutput ? ConvoColours::mint : ConvoColours::text);
+            g.setFont (juce::Font (juce::FontOptions (9.5f, juce::Font::bold)));
+            g.drawText (op->getCurrentValueAsText(), pill, juce::Justification::centred);
+        }
+    }
 }
 
 void ConvoAudioProcessorEditor::resized()
@@ -897,9 +1025,20 @@ void ConvoAudioProcessorEditor::resized()
     auto area = getLocalBounds().reduced (14);
 
     headerZone = area.removeFromTop (42);
-    bypassButton.setBounds (headerZone.removeFromRight (92).withSizeKeepingCentre (92, 26));
-    headerZone.removeFromRight (8);
-    wetCompButton.setBounds (headerZone.removeFromRight (112).withSizeKeepingCentre (112, 26));
+    // Size each toggle to its own content (label + LED chip) so the gap below actually controls the
+    // spacing. drawToggleButton right-justifies the label against the chip, so any extra button width
+    // becomes dead space on the LEFT — which is why fixed widths made the gaps look uncontrollable.
+    const juce::Font togFont (juce::FontOptions (14.0f));   // matches drawToggleButton's label font
+    const int togGap = 8;                                   // <-- spacing between Polarity / Wet Comp / Bypass
+    auto placeTog = [&] (juce::ToggleButton& tb)
+    {
+        const int w = juce::roundToInt (juce::GlyphArrangement::getStringWidth (togFont, tb.getButtonText())) + 36;
+        tb.setBounds (headerZone.removeFromRight (w).withSizeKeepingCentre (w, 26));
+        headerZone.removeFromRight (togGap);
+    };
+    placeTog (bypassButton);
+    placeTog (wetCompButton);
+    placeTog (polarityButton);
     area.removeFromTop (15);   // 12 px of clear space below the header rule -> matches the graph<->PRE/POST gap
 
     auto topRow = area.removeFromTop (168);
@@ -926,17 +1065,18 @@ void ConvoAudioProcessorEditor::resized()
 
     auto inner  = dropZone.reduced (10);
     auto header = inner.removeFromTop (26);
-    // header row: [ file name .......... ] [Presets] [◀][▶]  [Load IR...]
-    loadButton.setBounds (header.removeFromRight (92));
-    header.removeFromRight (10);
+    // top header row: [ Play ][ Baked/Raw ]  file name  [ Reverse ][ Norm IR ]  [ Presets ][◀][▶]
     nextPresetButton.setBounds (header.removeFromRight (26));
     header.removeFromRight (4);
     prevPresetButton.setBounds (header.removeFromRight (26));
     header.removeFromRight (4);
     presetButton.setBounds (header.removeFromRight (74));
-    header.removeFromRight (8);
-    playButton.setBounds (header.removeFromLeft (46));        // [Play] [Baked/Raw] on the left
-    header.removeFromLeft (6);
+    header.removeFromRight (12);
+    irNormButton.setBounds (header.removeFromRight (82));    // Reverse + Norm IR inline, left of Presets
+    header.removeFromRight (6);
+    reverseButton.setBounds (header.removeFromRight (82));
+    header.removeFromRight (12);
+    playButton.setBounds (header.removeFromLeft (46));       // [ Play | Baked/Raw ] — one segmented pill, flush
     auditionSrcButton.setBounds (header.removeFromLeft (58));
     header.removeFromLeft (10);
     fileNameLabel.setBounds (header);
@@ -945,25 +1085,22 @@ void ConvoAudioProcessorEditor::resized()
 
     area.removeFromTop (10);
     auto row1 = area.removeFromTop (170);
-    // Top row: FILTER (In HP / In LP) | IR SHAPE (4 knobs) | IR CHARACTER (Stretch / Damp +
-    // toggles). FILTER is its own 2-knob group on the left (DUCKING below it shares its width);
-    // IR SHAPE + IR CHARACTER split the rest 4 + 3, lining up with POST | VOLUME on the row below.
-    filterPanel = row1.removeFromLeft (juce::roundToInt ((row1.getWidth() - 10) * 2.0f / 9.0f));
-    row1.removeFromLeft (10);
-    auto postArea = row1;                       // IR SHAPE + IR CHARACTER split this span (4 + 3)
     area.removeFromTop (10);
     auto row2 = area.removeFromTop (170);
-    duckPanel = row2.removeFromLeft (filterPanel.getWidth());   // DUCKING sits under FILTER
-    row2.removeFromLeft (10);
-    // Bottom row post-area: POST (4 knobs) | VOLUME (3 knobs), split 4 + 3 (same as IR SHAPE | IR
-    // CHARACTER above, so every column lines up across the two rows).
+
+    // Both knob rows share a 3 | 4 | 2 column split (group widths proportional to their knob
+    // counts), so every column lines up across the two rows.
+    auto split342 = [] (juce::Rectangle<int> row, juce::Rectangle<int>& a,
+                        juce::Rectangle<int>& b, juce::Rectangle<int>& c)
     {
-        const int gap    = 10;
-        const int usable = row2.getWidth() - gap;
-        const int volW   = juce::roundToInt ((3.0f * (float) usable + 20.0f) / 7.0f);
-        postPanel   = row2.withWidth (usable - volW);
-        volumePanel = row2.withTrimmedLeft ((usable - volW) + gap);
-    }
+        const int gap = 10;
+        const int usable = row.getWidth() - 2 * gap;
+        a = row.removeFromLeft (juce::roundToInt ((float) usable * 3.0f / 9.0f)); row.removeFromLeft (gap);
+        b = row.removeFromLeft (juce::roundToInt ((float) usable * 4.0f / 9.0f)); row.removeFromLeft (gap);
+        c = row;
+    };
+    split342 (row1, filterPanel, shapePanel, charPanel);     // FILTER | IR SHAPE | IR CHARACTER
+    split342 (row2, duckPanel,   postPanel,  volumePanel);   // DUCKING | POST | VOLUME
 
     auto placeKnob = [] (juce::Rectangle<int> cell, juce::Slider& s, juce::Label& l)
     {
@@ -993,68 +1130,54 @@ void ConvoAudioProcessorEditor::resized()
         return r;
     };
 
-    // Top row post-area: IR SHAPE (4 knobs) | IR CHARACTER (3 slots), split 4 + 3 (equal cell
-    // widths, same split as POST | VOLUME below so every column lines up across the two rows).
+    // evenly split a panel's knob area into n columns and return column i
+    auto gcell = [] (juce::Rectangle<int> ka, int n, int i)
     {
-        const int gap    = 10;
-        const int usable = postArea.getWidth() - gap;
-        const int charW  = juce::roundToInt ((3.0f * (float) usable + 20.0f) / 7.0f);
-        shapePanel  = postArea.withWidth (usable - charW);
-        charPanel   = postArea.withTrimmedLeft ((usable - charW) + gap);
-    }
-    auto postKA = knobArea (postPanel);     // 4-column grid (POST + IR SHAPE share these columns)
-    auto volKA  = knobArea (volumePanel);   // 3-column grid (VOLUME + IR CHARACTER)
-    const int cwP = postKA.getWidth() / 4;
-    const int cwV = volKA.getWidth()  / 3;
-    // place at a POST / VOLUME column, taking the given row's y so the IR SHAPE row lines up
-    auto pcolP = [&] (int i, juce::Rectangle<int> r) { return juce::Rectangle<int> (postKA.getX() + i * cwP, r.getY(), cwP, r.getHeight()); };
-    auto pcolV = [&] (int j, juce::Rectangle<int> r) { return juce::Rectangle<int> (volKA.getX()  + j * cwV, r.getY(), cwV, r.getHeight()); };
+        const int cw = ka.getWidth() / n;
+        return juce::Rectangle<int> (ka.getX() + i * cw, ka.getY(), cw, ka.getHeight());
+    };
 
-    {   // FILTER — pre-IR input filters
-        auto row = knobArea (filterPanel);
-        const int cellW = row.getWidth() / 2;
-        placeKnob (row.removeFromLeft (cellW), inHPSlider, inHPLabel);
-        placeKnob (row.removeFromLeft (cellW), inLPSlider, inLPLabel);
+    {   // FILTER (3): In HP / In LP / Q
+        auto ka = knobArea (filterPanel);
+        placeKnob (gcell (ka, 3, 0), inHPSlider,    inHPLabel);
+        placeKnob (gcell (ka, 3, 1), inLPSlider,    inLPLabel);
+        placeKnob (gcell (ka, 3, 2), filterQSlider, filterQLabel);
     }
-    {   // POST: Bass Mono / Pre-Delay / Tone / Width
-        placeKnob (pcolP (0, postKA), msBassSlider,   msBassLabel);   // Bass Mono
-        placeKnob (pcolP (1, postKA), preDelaySlider, preDelayLabel);
-        placeKnob (pcolP (2, postKA), toneSlider,     toneLabel);
-        placeKnob (pcolP (3, postKA), widthSlider,    widthLabel);
+    {   // IR SHAPE (4): IR Gain / Fade / Decay / Taper
+        auto ka = knobArea (shapePanel);
+        placeKnob (gcell (ka, 4, 0), irGainSlider, irGainLabel);
+        placeKnob (gcell (ka, 4, 1), fadeInSlider, fadeInLabel);
+        placeKnob (gcell (ka, 4, 2), decaySlider,  decayLabel);
+        placeKnob (gcell (ka, 4, 3), taperSlider,  taperLabel);
     }
-    {   // VOLUME (Dry/Wet/Output)
-        placeKnob (pcolV (0, volKA), drySlider,    dryLabel);
-        placeKnob (pcolV (1, volKA), wetSlider,    wetLabel);
-        placeKnob (pcolV (2, volKA), outputSlider, outputLabel);
+    {   // IR CHARACTER (2): Stretch / Damp
+        auto ka = knobArea (charPanel);
+        placeKnob (gcell (ka, 2, 0), stretchSlider, stretchLabel);
+        placeKnob (gcell (ka, 2, 1), dampSlider,    dampLabel);
     }
+    {   // DUCKING (3): Duck / Release / Gate
+        auto ka = knobArea (duckPanel);
+        placeKnob (gcell (ka, 3, 0), duckSlider,    duckLabel);
+        placeKnob (gcell (ka, 3, 1), duckRelSlider, duckRelLabel);
+        placeKnob (gcell (ka, 3, 2), gateSlider,    gateLabel);
+    }
+    {   // POST (4): Bass Mono / Pre-Delay / Tone / Width
+        auto ka = knobArea (postPanel);
+        placeKnob (gcell (ka, 4, 0), msBassSlider,   msBassLabel);
+        placeKnob (gcell (ka, 4, 1), preDelaySlider, preDelayLabel);
+        placeKnob (gcell (ka, 4, 2), toneSlider,     toneLabel);
+        placeKnob (gcell (ka, 4, 3), widthSlider,    widthLabel);
+    }
+    {   // VOLUME (2): Dry / Wet
+        auto ka = knobArea (volumePanel);
+        placeKnob (gcell (ka, 2, 0), drySlider, dryLabel);
+        placeKnob (gcell (ka, 2, 1), wetSlider, wetLabel);
+    }
+
+    // Filter IR: inline with the FILTER caption, right side
     {
-        auto row = knobArea (duckPanel);
-        const int cellW = row.getWidth() / 2;
-        placeKnob (row.removeFromLeft (cellW), duckSlider,    duckLabel);
-        placeKnob (row.removeFromLeft (cellW), duckRelSlider, duckRelLabel);
-    }
-    {   // IR SHAPE — IR Gain / Fade / Decay / Taper, aligned under POST
-        auto row = knobArea (shapePanel);
-        placeKnob (pcolP (0, row), irGainSlider, irGainLabel);   // under Bass Mono
-        placeKnob (pcolP (1, row), fadeInSlider, fadeInLabel);   // under Pre-Delay
-        placeKnob (pcolP (2, row), decaySlider,  decayLabel);    // under Tone
-        placeKnob (pcolP (3, row), taperSlider,  taperLabel);    // under Width
-    }
-    {   // IR CHARACTER — Stretch, Damp + the toggle column, aligned under VOLUME
-        auto row = knobArea (charPanel);
-        placeKnob (pcolV (0, row), stretchSlider, stretchLabel);   // under Dry
-        placeKnob (pcolV (1, row), dampSlider,    dampLabel);      // under Wet
-        // toggle column under the Output column
-        const int btnH = 28, gap = 6, colH = btnH * 3 + gap * 2;
-        const int togLeft  = volKA.getX() + 2 * cwV;
-        const int togRight = outputSlider.getBounds().getRight();
-        auto toggles = juce::Rectangle<int> (togLeft, row.getCentreY() - colH / 2,
-                                             togRight - togLeft, colH);
-        reverseButton.setBounds  (toggles.removeFromTop (btnH));
-        toggles.removeFromTop (gap);
-        irNormButton.setBounds (toggles.removeFromTop (btnH));
-        toggles.removeFromTop (gap);
-        filterIRButton.setBounds (toggles.removeFromTop (btnH));
+        auto cap = filterPanel.reduced (10, 0).removeFromTop (24).translated(5,3);
+        filterIRButton.setBounds (cap.removeFromRight (84).withSizeKeepingCentre (84, 20));
     }
 
     renderBackground();
@@ -1119,6 +1242,35 @@ void ConvoAudioProcessorEditor::timerCallback()
         playShown = auditioning;
         playButton.setButtonText (auditioning ? "Stop" : "Play");
     }
+    // smooth text-colour crossfades: Play follows playback; Reverse / Norm IR follow their toggle
+    // state (grey -> mint); Baked/Raw crossfades mint (Raw) -> copper (Baked)
+    auto animText = [this] (juce::Button& bn, float& cur, float target, juce::Colour off, juce::Colour on)
+    {
+        if (std::abs (cur - target) > 0.0015f)
+        {
+            cur += (target - cur) * 0.3f;
+            if (std::abs (cur - target) < 0.02f) cur = target;
+            setLedTextColour (bn, cur, off, on);
+            bn.repaint();
+        }
+    };
+    // Play follows playback; while playing, the whole segmented pill's border lights up (both halves)
+    {
+        const float target = auditioning ? 1.0f : 0.0f;
+        if (std::abs (playLit - target) > 0.0015f)
+        {
+            playLit += (target - playLit) * 0.3f;
+            if (std::abs (playLit - target) < 0.02f) playLit = target;
+            setLedTextColour (playButton, playLit, ConvoColours::label, ConvoColours::mint);
+            playButton.getProperties().set        ("rimLit", (double) playLit);
+            auditionSrcButton.getProperties().set ("rimLit", (double) playLit);
+            playButton.repaint();
+            auditionSrcButton.repaint();
+        }
+    }
+    animText (reverseButton,     reverseLit, reverseButton.getToggleState() ? 1.0f : 0.0f,       ConvoColours::label, ConvoColours::mint);
+    animText (irNormButton,      normLit,    irNormButton.getToggleState()  ? 1.0f : 0.0f,       ConvoColours::label, ConvoColours::mint);
+    animText (auditionSrcButton, bakedBlend, auditionSrcButton.getToggleState() ? 1.0f : 0.0f,   ConvoColours::mint,  ConvoColours::copper);
 
     const auto name = processor.getIRLibrary().getDisplayName();
     if (name != lastFileName)
@@ -1138,11 +1290,13 @@ void ConvoAudioProcessorEditor::timerCallback()
     const float ovTone = apvts.getRawParameterValue ("tone")->load();
     const float ovHp   = apvts.getRawParameterValue ("inHP")->load();
     const float ovLp   = apvts.getRawParameterValue ("inLP")->load();
+    const float ovQ    = apvts.getRawParameterValue ("filterQ")->load();
     const float ovBass = apvts.getRawParameterValue ("msBass")->load();
     if (! juce::approximatelyEqual (ovTone, eqToneSeen) || ! juce::approximatelyEqual (ovHp, eqHpSeen)
-        || ! juce::approximatelyEqual (ovLp, eqLpSeen) || ! juce::approximatelyEqual (ovBass, eqBassSeen))
+        || ! juce::approximatelyEqual (ovLp, eqLpSeen) || ! juce::approximatelyEqual (ovQ, eqQSeen)
+        || ! juce::approximatelyEqual (ovBass, eqBassSeen))
     {
-        eqToneSeen = ovTone; eqHpSeen = ovHp; eqLpSeen = ovLp; eqBassSeen = ovBass;
+        eqToneSeen = ovTone; eqHpSeen = ovHp; eqLpSeen = ovLp; eqQSeen = ovQ; eqBassSeen = ovBass;
         renderOverlay();        // rebuild the cached curve once per change, not in paint
         repaint (dropZone);
     }
@@ -1177,10 +1331,13 @@ void ConvoAudioProcessorEditor::timerCallback()
         inShown = inMeter; inPeakShown = inPeak;
         repaint (inMeterZone);
     }
-    if (moved (outMeter, outShown) || moved (outPeak, outPeakShown))
+    // OUT meter + the Output fader overlay; also repaint when the output gain moves (host automation)
+    const float outGain = processor.getAPVTS().getParameter ("output") != nullptr
+                        ? processor.getAPVTS().getParameter ("output")->getValue() : 0.0f;
+    if (moved (outMeter, outShown) || moved (outPeak, outPeakShown) || std::abs (outGain - outGainShown) > 0.0008f)
     {
-        outShown = outMeter; outPeakShown = outPeak;
-        repaint (outMeterZone);
+        outShown = outMeter; outPeakShown = outPeak; outGainShown = outGain;
+        repaint (outMeterZone.expanded (16, 16));
     }
     // ducking GR probe: hand the live reduction to the Duck knob's LookAndFeel and repaint only when it moves
     if (moved (duckGR, duckGRShown))
@@ -1188,6 +1345,14 @@ void ConvoAudioProcessorEditor::timerCallback()
         duckGRShown = duckGR;
         duckSlider.getProperties().set ("gr", duckGR);
         duckSlider.repaint();
+    }
+    // gate activity: grey the Gate knob's arc when idle, mint when the gate is cutting
+    const float gateAct = processor.getGateActivity();
+    if (moved (gateAct, gateActShown))
+    {
+        gateActShown = gateAct;
+        gateSlider.getProperties().set ("gateAct", gateAct);
+        gateSlider.repaint();
     }
 }
 

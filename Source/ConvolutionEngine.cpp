@@ -32,10 +32,13 @@ void ConvolutionEngine::reset()
     longEngine.reset();
 }
 
-int ConvolutionEngine::computeLatency (int engineIndex) const noexcept
+int ConvolutionEngine::computeLatency (int /*engineIndex*/) const noexcept
 {
-    return engineIndex == 1 ? longEngineLatencyForBlockSize (juce::jmax (1, maxBlockSize))
-                            : 0;
+    // Both engines are zero-latency: the short engine is JUCE's zero-latency uniform
+    // partition; the long engine is a non-uniform partition whose head is also
+    // zero-latency (JUCE compensates the tail's internal latency). The plugin therefore
+    // reports no latency for any IR length.
+    return 0;
 }
 
 int ConvolutionEngine::expectedKernelSize (int bakedLen, double irSampleRate, double engineSampleRate) noexcept
@@ -241,25 +244,34 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
     // 6b. pre-IR filter baked into the kernel (when the filter targets the IR). Placed
     //     after auto-level so the result matches runtime input-filtering by linearity
     //     (conv is LTI: filter(in) * k == in * filter(k), and the auto-level gain is the
-    //     same either way). Same first-order Duplicator the audio thread uses at runtime.
-    if (bp.filterIR)
+    //     same either way). 2nd-order HP/LP with shared Q — same coeffs + the same flat-extreme
+    //     skip the audio thread uses at runtime, so baked and runtime filtering match exactly.
+    if (bp.filterIR && (bp.inHPHz > 21.0f || bp.inLPHz < 19900.0f))
     {
         juce::dsp::ProcessSpec ks { irSampleRate,
                                     (juce::uint32) juce::jmax (1, out.getNumSamples()),
                                     (juce::uint32) out.getNumChannels() };
-        juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
-                                       juce::dsp::IIR::Coefficients<float>> hp, lp;
-        hp.prepare (ks);
-        lp.prepare (ks);
-        *hp.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderHighPass (irSampleRate, bp.inHPHz);
-        *lp.state = juce::dsp::IIR::ArrayCoefficients<float>::makeFirstOrderLowPass  (irSampleRate, bp.inLPHz);
-        hp.reset();
-        lp.reset();
-
         juce::dsp::AudioBlock<float> kb (out);
         juce::dsp::ProcessContextReplacing<float> ctx (kb);
-        hp.process (ctx);
-        lp.process (ctx);
+
+        if (bp.inHPHz > 21.0f)
+        {
+            juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
+                                           juce::dsp::IIR::Coefficients<float>> hp;
+            hp.prepare (ks);
+            *hp.state = juce::dsp::IIR::ArrayCoefficients<float>::makeHighPass (irSampleRate, bp.inHPHz, bp.inFilterQ);
+            hp.reset();
+            hp.process (ctx);
+        }
+        if (bp.inLPHz < 19900.0f)
+        {
+            juce::dsp::ProcessorDuplicator<juce::dsp::IIR::Filter<float>,
+                                           juce::dsp::IIR::Coefficients<float>> lp;
+            lp.prepare (ks);
+            *lp.state = juce::dsp::IIR::ArrayCoefficients<float>::makeLowPass (irSampleRate, bp.inLPHz, bp.inFilterQ);
+            lp.reset();
+            lp.process (ctx);
+        }
     }
 
     return out;

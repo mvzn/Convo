@@ -7,11 +7,13 @@
 #include <memory>
 
 /**
-    Convo's editor. All chrome that never changes between frames (panels, captions,
-    title, meter wells) is rendered once into a cached image on resize; the waveform
-    is rendered into its own cached image only when the bake changes. paint() then
-    just blits and draws the few dynamic bits, and the 30 Hz timer repaints nothing
-    unless a meter value actually moved — the editor idles at ~zero paint cost.
+    Convo's editor. The heavy static chrome graphics (panels, meter wells, ticks, rules)
+    are rendered once into a cached image on resize; the waveform is rendered into its own
+    cached image only when the bake changes. Static chrome *text* (title, captions, meter
+    labels) is drawn live in paint() — baking it into the scaled cache softens glyphs on
+    HiDPI displays. paint() blits the caches, draws that text, then the few dynamic bits;
+    the 30 Hz timer repaints nothing unless a meter value actually moved, so the editor
+    idles at ~zero paint cost.
 */
 class ConvoAudioProcessorEditor : public juce::AudioProcessorEditor,
                                   public juce::FileDragAndDropTarget,
@@ -45,6 +47,8 @@ private:
     void loadFile (const juce::File& file);
     void rebuildThumbnail();
     void showIRContextMenu();              // right-click on the IR display: reveal file / audition
+    void setOutputFromMouseY (float y);    // drag the Output fader line on the OUT meter -> output param
+    void setLedTextColour (juce::Button&, float amt, juce::Colour off, juce::Colour on);   // animated button text colour
 
     // presets
     void showPresetMenu();                 // popup: save new + pick by name
@@ -52,7 +56,8 @@ private:
     void loadPresetFile (const juce::File& file);
     void promptSavePreset();               // async name prompt -> processor.savePreset
 
-    void renderBackground();           // static chrome -> backgroundImage
+    void renderBackground();           // static chrome graphics -> backgroundImage
+    void drawChromeText (juce::Graphics&);   // static chrome text, drawn live for HiDPI crispness
     void renderWaveImage();            // full-IR waveform -> waveImage (the trim backdrop)
     void renderKernelImage();          // trimmed+shaped kernel -> kernelImage (the selection layer)
     float irGainVisualGain() const;    // IR Gain as a linear factor -> waveform vertical zoom
@@ -86,13 +91,14 @@ private:
     juce::AudioThumbnailCache kernelThumbnailCache { 2 };
     std::unique_ptr<juce::AudioThumbnail> kernelThumbnail;   // trimmed+shaped kernel, drawn inside the selection
     juce::Label               fileNameLabel;
-    juce::TextButton          loadButton { "Load IR..." };
     juce::TextButton          presetButton { "Presets" };
     juce::TextButton          prevPresetButton { juce::String::fromUTF8 ("\xE2\x97\x80") };   // ◀
     juce::TextButton          nextPresetButton { juce::String::fromUTF8 ("\xE2\x96\xB6") };   // ▶
     juce::TextButton          playButton { "Play" };            // audition the IR through the output
     juce::TextButton          auditionSrcButton { "Baked" };    // audition source toggle: Baked / Raw
     bool                      playShown = false;                // last-painted audition state (timer-driven)
+    float                     playLit = 0.0f, reverseLit = 0.0f, normLit = 0.0f;   // smooth LED lit crossfades (0..1)
+    float                     bakedBlend = 1.0f;                // Baked/Raw colour crossfade (1 = copper / Baked, 0 = mint / Raw)
     juce::String              lastFileName;
     int                       lastBakeGen = -1;
     bool                      fileOver = false;
@@ -100,34 +106,39 @@ private:
     double                    bakedLenSeconds = 0.0;
     juce::String              bakedLenText;          // cached "N.NN s" label (no per-paint String build)
 
-    // parameter controls
-    juce::Slider drySlider, wetSlider, irGainSlider, outputSlider, toneSlider, inHPSlider, inLPSlider,
+    // parameter controls (Output has no knob — it's the fader line on the OUT meter)
+    juce::Slider drySlider, wetSlider, irGainSlider, toneSlider, inHPSlider, inLPSlider, filterQSlider,
                  preDelaySlider, widthSlider, msBassSlider,
-                 duckSlider, duckRelSlider, fadeInSlider, decaySlider, taperSlider, stretchSlider, dampSlider;
-    juce::Label  dryLabel, wetLabel, irGainLabel, outputLabel, toneLabel, inHPLabel, inLPLabel,
+                 duckSlider, duckRelSlider, gateSlider, fadeInSlider, decaySlider, taperSlider, stretchSlider, dampSlider;
+    juce::Label  dryLabel, wetLabel, irGainLabel, toneLabel, inHPLabel, inLPLabel, filterQLabel,
                  preDelayLabel, widthLabel, msBassLabel,
-                 duckLabel, duckRelLabel, fadeInLabel, decayLabel, taperLabel, stretchLabel, dampLabel;
-    juce::ToggleButton reverseButton { "Reverse" }, irNormButton { "Norm IR" }, filterIRButton { "Filter IR" },
+                 duckLabel, duckRelLabel, gateLabel, fadeInLabel, decayLabel, taperLabel, stretchLabel, dampLabel;
+    juce::TextButton   reverseButton { "Reverse" }, irNormButton { "Norm IR" };   // LED text-buttons on the waveform
+    juce::ToggleButton filterIRButton { "Filter IR" },
                        wetCompButton { "Wet Comp" },
+                       polarityButton { juce::String::fromUTF8 ("\xC3\x98") },   // Ø — invert the wet polarity
                        bypassButton { "Bypass" };
 
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
-    std::unique_ptr<SliderAttachment> dryAtt, wetAtt, irGainAtt, outputAtt, toneAtt, inHPAtt, inLPAtt,
+    std::unique_ptr<SliderAttachment> dryAtt, wetAtt, irGainAtt, toneAtt, inHPAtt, inLPAtt, filterQAtt,
                                       preDelayAtt, widthAtt, msBassAtt,
-                                      duckAtt, duckRelAtt, fadeInAtt, decayAtt, taperAtt, stretchAtt, dampAtt;
-    std::unique_ptr<ButtonAttachment> reverseAtt, irNormAtt, filterIRAtt, wetCompAtt, bypassAtt;
+                                      duckAtt, duckRelAtt, gateAtt, fadeInAtt, decayAtt, taperAtt, stretchAtt, dampAtt;
+    std::unique_ptr<ButtonAttachment> reverseAtt, irNormAtt, filterIRAtt, wetCompAtt, polarityAtt, bypassAtt;
+    bool draggingOutput = false;   // dragging the Output fader line on the OUT meter
 
     // meters: shown values + slower-decaying peak-hold lines, with last-painted
     // copies so the timer can skip repaints when nothing moved
     float inMeter = 0.0f, outMeter = 0.0f;
     float inPeak  = 0.0f, outPeak  = 0.0f;
     float inShown = -1.0f, outShown = -1.0f, inPeakShown = -1.0f, outPeakShown = -1.0f;
+    float outGainShown = -1.0f;   // last-painted Output-fader position (param 0..1)
     float duckGR = 0.0f, duckGRShown = -1.0f;   // live ducking gain reduction painted on the Duck knob
+    float gateActShown = -2.0f;                 // last-painted Gate-knob activity (grey -> mint)
 
     // last-seen values of the overlay params (tone / In HP / In LP / X-Over) so the
     // timer can repaint the wave layer when they move — they are not bake params
-    float eqToneSeen = -1.0e9f, eqHpSeen = -1.0e9f, eqLpSeen = -1.0e9f, eqBassSeen = -1.0e9f;
+    float eqToneSeen = -1.0e9f, eqHpSeen = -1.0e9f, eqLpSeen = -1.0e9f, eqQSeen = -1.0e9f, eqBassSeen = -1.0e9f;
 
     // IR trim handles (Start/End): drag state + last-seen param values so the timer can
     // repaint the wave layer when a handle moves (the bake itself re-windows via the
