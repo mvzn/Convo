@@ -28,3 +28,6 @@ Convo Pro planning.md
 # JUCE / CMake generated
 JuceLibraryCode/
 *_artefacts/
+
+# Claude Code local working dir (agent worktrees, settings)
+.claude/

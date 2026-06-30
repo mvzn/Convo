@@ -1,16 +1,3 @@
-Convo — a convolution audio effect plugin
-Copyright (C) 2026 mvzn
-
-This program is free software: you can redistribute it and/or modify it under
-the terms of the GNU Affero General Public License as published by the Free
-Software Foundation, either version 3 of the License, or (at your option) any
-later version. See the full license text below.
-
-Convo is built with the JUCE framework, used under its AGPLv3 option
-(https://juce.com). This is why Convo itself is distributed under the AGPLv3.
-
-----------------------------------------------------------------------
-
                     GNU AFFERO GENERAL PUBLIC LICENSE
                        Version 3, 19 November 2007
 
