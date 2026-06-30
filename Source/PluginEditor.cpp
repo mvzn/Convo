@@ -1,3 +1,20 @@
+/*
+    Convo — a convolution audio effect plugin
+    Copyright (C) 2026 mvzn
+
+    This program is free software: you can redistribute it and/or modify it under
+    the terms of the GNU Affero General Public License as published by the Free
+    Software Foundation, either version 3 of the License, or (at your option) any
+    later version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+    PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License along
+    with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #include "PluginEditor.h"
 
 namespace
@@ -476,6 +493,15 @@ void ConvoAudioProcessorEditor::drawChromeText (juce::Graphics& g)
         g.drawText ("CONVOLUTION", h.withTrimmedLeft (12), juce::Justification::centredLeft);
     }
 
+    // "i" info affordance for the about / AGPL legal notice (click handled in mouseDown)
+    {
+        const auto a = aboutZone.toFloat();
+        g.setColour (ConvoColours::textDim);
+        g.drawEllipse (a.reduced (1.5f), 1.0f);
+        g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
+        g.drawText ("i", aboutZone, juce::Justification::centred);
+    }
+
     // panel captions (mint ticks are baked; only the labels are live)
     g.setColour (ConvoColours::textDim);
     g.setFont (captionFont());
@@ -742,6 +768,13 @@ void ConvoAudioProcessorEditor::drawTrimHandles (juce::Graphics& g)
 
 void ConvoAudioProcessorEditor::mouseMove (const juce::MouseEvent& e)
 {
+    if (aboutZone.contains (e.getPosition()))   // the "i" hotspot reads as clickable
+    {
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        if (hoverHandle != TrimHandle::none) { hoverHandle = TrimHandle::none; repaint (dropZone); }
+        return;
+    }
+
     const auto h = trimHandleAt (e.getPosition());
     if (h != hoverHandle)
     {
@@ -758,6 +791,12 @@ void ConvoAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
     {
         if (dropZone.contains (e.getPosition()))
             showIRContextMenu();
+        return;
+    }
+
+    if (aboutZone.contains (e.getPosition()))   // the header "i": about / AGPL legal notice
+    {
+        showAboutMenu();
         return;
     }
 
@@ -900,6 +939,29 @@ void ConvoAudioProcessorEditor::showIRContextMenu()
         });
 }
 
+// The header "i": Convo's "Appropriate Legal Notices" (AGPLv3 §0/§5) — copyright, no-warranty,
+// the licence, and an offer of the Corresponding Source. A plugin can't drive the host browser
+// reliably, but launchInDefaultBrowser is the conventional path for the source/licence links.
+void ConvoAudioProcessorEditor::showAboutMenu()
+{
+    juce::PopupMenu m;
+    m.addSectionHeader ("Convo \xE2\x80\x94 convolution audio effect");
+    m.addItem (1, juce::String::fromUTF8 ("\xC2\xA9 2026 mvzn"),                false, false);   // © 2026 mvzn
+    m.addItem (2, "Free software under the GNU AGPLv3",                         false, false);
+    m.addItem (3, "Comes with ABSOLUTELY NO WARRANTY",                         false, false);
+    m.addItem (4, "Built with JUCE (juce.com), used under its AGPLv3 option",  false, false);
+    m.addSeparator();
+    m.addItem (10, "View source code (github.com/mvzn/Convo)");
+    m.addItem (11, "View the AGPLv3 licence");
+
+    m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
+        [] (int r)
+        {
+            if      (r == 10) juce::URL ("https://github.com/mvzn/Convo").launchInDefaultBrowser();
+            else if (r == 11) juce::URL ("https://www.gnu.org/licenses/agpl-3.0.html").launchInDefaultBrowser();
+        });
+}
+
 // Mode hints, polled at 30 Hz but only touched on a flip:
 //  - The X-Over crossover only does anything when Bass Mono is on, so dim it while it's off.
 //  - In HP / In LP filter the input by default; when Filter IR is on they're baked into the IR
@@ -1039,6 +1101,17 @@ void ConvoAudioProcessorEditor::resized()
     placeTog (bypassButton);
     placeTog (wetCompButton);
     placeTog (polarityButton);
+
+    // "i" info hotspot, just right of the CONVOLUTION tagline (headerZone is now the left region,
+    // the toggles having been removed from the right). Opens the AGPL legal notice / source links.
+    {
+        auto h = headerZone;
+        h.removeFromLeft (92);                                  // past the "Convo" wordmark
+        const auto tag  = h.withTrimmedLeft (12);              // where the tagline starts (matches drawChromeText)
+        const int  tagW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (captionFont(), "CONVOLUTION"));
+        aboutZone = juce::Rectangle<int> (tag.getX() + tagW + 9, headerZone.getCentreY() - 8, 16, 16);
+    }
+
     area.removeFromTop (15);   // 12 px of clear space below the header rule -> matches the graph<->PRE/POST gap
 
     auto topRow = area.removeFromTop (168);

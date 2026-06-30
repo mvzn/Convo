@@ -1,3 +1,20 @@
+/*
+    Convo — a convolution audio effect plugin
+    Copyright (C) 2026 mvzn
+
+    This program is free software: you can redistribute it and/or modify it under
+    the terms of the GNU Affero General Public License as published by the Free
+    Software Foundation, either version 3 of the License, or (at your option) any
+    later version.
+
+    This program is distributed in the hope that it will be useful, but WITHOUT ANY
+    WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+    PARTICULAR PURPOSE. See the GNU Affero General Public License for more details.
+
+    You should have received a copy of the GNU Affero General Public License along
+    with this program. If not, see <https://www.gnu.org/licenses/>.
+*/
+
 #pragma once
 
 #include <JuceHeader.h>
@@ -47,6 +64,7 @@ private:
     void loadFile (const juce::File& file);
     void rebuildThumbnail();
     void showIRContextMenu();              // right-click on the IR display: reveal file / audition
+    void showAboutMenu();                  // the header "i" hotspot: AGPL legal notice + source/licence links
     void setOutputFromMouseY (float y);    // drag the Output fader line on the OUT meter -> output param
     void setLedTextColour (juce::Button&, float amt, juce::Colour off, juce::Colour on);   // animated button text colour
 
@@ -168,6 +186,7 @@ private:
     // layout regions (used by paint)
     juce::Rectangle<int> headerZone, dropZone, waveZone, inMeterZone, outMeterZone,
                          filterPanel, postPanel, volumePanel, duckPanel, shapePanel, charPanel;
+    juce::Rectangle<int> aboutZone;        // small "i" hotspot by the tagline (AGPL legal notice)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessorEditor)
 };
