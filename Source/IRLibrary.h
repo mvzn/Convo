@@ -25,7 +25,7 @@
     Convo's IRLibrary is deliberately simple: it owns the decoded IR buffer at its
     original sample rate and nothing more. All shaping (reverse / fade-in / decay /
     taper) happens later, in ConvolutionEngine, against this raw buffer. There is no
-    note addressing or transposition here (that lived in Convsyn).
+    note addressing or transposition here — Convo is a pure convolver, not a sampler.
 
     Decoding reads at most 2 channels (the convolution only ever uses two). There is
     no musical length cap: long songs load in full so they work as sound-design IRs
