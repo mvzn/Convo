@@ -230,7 +230,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
         if (processor.isAuditioning()) processor.stopAudition();
         else                           processor.startAudition (auditionSrcButton.getToggleState());
     };
-    auditionSrcButton.setTooltip ("Audition source — Baked: after all processing; Raw: the original IR");
+    auditionSrcButton.setTooltip ("Audition source - Baked: after all processing; Raw: the original IR");
     auditionSrcButton.setClickingTogglesState (true);
     auditionSrcButton.setToggleState (true, juce::dontSendNotification);   // default: Baked
     auditionSrcButton.onClick = [this]   // text colour crossfades mint (Raw) <-> copper (Baked) in the timer
@@ -945,7 +945,7 @@ void ConvoAudioProcessorEditor::showIRContextMenu()
 void ConvoAudioProcessorEditor::showAboutMenu()
 {
     juce::PopupMenu m;
-    m.addSectionHeader ("Convo \xE2\x80\x94 convolution audio effect");
+    m.addSectionHeader ("Convo - convolution audio effect");
     m.addItem (1, juce::String::fromUTF8 ("\xC2\xA9 2026 mvzn"),                false, false);   // © 2026 mvzn
     m.addItem (2, "Free software under the GNU AGPLv3",                         false, false);
     m.addItem (3, "Comes with ABSOLUTELY NO WARRANTY",                         false, false);
