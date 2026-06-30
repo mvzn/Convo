@@ -911,7 +911,7 @@ void ConvoAudioProcessorEditor::showIRContextMenu()
     const bool hasIR   = lib.hasIR();
 
     juce::PopupMenu m;
-    m.addItem (5, "Load IR\xE2\x80\xA6", true, false);   // also: double-click the display
+    m.addItem (5, "Load IR...", true, false);   // also: double-click the display
     m.addSeparator();
     // a plugin can't drive the host's own browser, so this reveals the file in the OS file explorer
     m.addItem (1, "Reveal IR in file explorer", hasFile, false);
