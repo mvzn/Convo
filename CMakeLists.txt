@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(Convo VERSION 1.2.0 LANGUAGES C CXX)
+project(Convo VERSION 1.0.0 LANGUAGES C CXX)
 
 # Default to Release for single-config generators (Ninja, Makefiles): an unoptimised Debug
 # build stutters / drops out on long-IR convolution. Multi-config generators (VS, Xcode) are
