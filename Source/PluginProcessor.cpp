@@ -251,6 +251,13 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     currentSampleRate = sampleRate;
     const int maxSamples = juce::jmax (1, samplesPerBlock);
 
+    // ~8 ms audition crossfade (declicks the solo start/stop); reset any in-flight playback
+    auditionFadeStep   = 1.0f / (float) juce::jmax (1, juce::roundToInt (0.008 * sampleRate));
+    auditionFade       = 0.0f;
+    auditionFadeTarget = 0.0f;
+    auditionPlayIdx    = -1;
+    auditionPos        = 0.0;
+
     juce::dsp::ProcessSpec spec;
     spec.sampleRate       = sampleRate;
     spec.maximumBlockSize = (juce::uint32) maxSamples;
@@ -744,49 +751,61 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
     duckGR.store (juce::jmax (maxGR, duckGR.load() * 0.85f));   // decaying peak hold, same as the meters
 
-    // IR audition: while playing, replace the output with the IR (resampled to the host rate),
-    // soloing it so you hear the kernel clearly. Reads a pre-filled buffer — no allocation here.
+    // IR audition: while playing, crossfade the output over to the IR (resampled to the host rate),
+    // soloing it so you hear the kernel clearly. A short fade in/out declicks the start and stop —
+    // hard-switching from the mix to the IR's onset used to pop. Reads a pre-filled buffer, no alloc.
     {
         const int gen = auditionGen.load (std::memory_order_acquire);
         if (gen != auditionGenSeen)
         {
             auditionGenSeen = gen;
-            auditionPlayIdx = auditionReadIdx.load (std::memory_order_acquire);
-            auditionPos     = 0.0;
-        }
-        bool playing = false;
-        if (auditionPlayIdx >= 0)
-        {
-            const auto& src = auditionBuf[auditionPlayIdx];
-            const int   srcN  = src.getNumSamples();
-            const int   srcCh = src.getNumChannels();
-            if (srcN > 0 && auditionPos < (double) srcN)
+            const int newIdx = auditionReadIdx.load (std::memory_order_acquire);
+            if (newIdx >= 0)                 // start / re-trigger: play from the top, fade in
             {
-                playing = true;
-                const double ratio = auditionBufRate[auditionPlayIdx] / currentSampleRate;
-                for (int i = 0; i < numSamples; ++i)
-                {
-                    if (auditionPos >= (double) srcN)
-                    {
-                        for (int ch = 0; ch < numCh; ++ch) mainOut.setSample (ch, i, 0.0f);
-                        continue;
-                    }
-                    const int   i0 = (int) auditionPos;
-                    const int   i1 = juce::jmin (i0 + 1, srcN - 1);
-                    const float fr = (float) (auditionPos - (double) i0);
-                    for (int ch = 0; ch < numCh; ++ch)
-                    {
-                        const int   sc = juce::jmin (ch, srcCh - 1);
-                        const float s  = src.getSample (sc, i0) * (1.0f - fr) + src.getSample (sc, i1) * fr;
-                        mainOut.setSample (ch, i, convo::softClip (s));
-                    }
-                    auditionPos += ratio;
-                }
-                if (auditionPos >= (double) srcN) playing = false;   // reached the end this block
+                auditionPlayIdx    = newIdx;
+                auditionPos        = 0.0;
+                auditionFadeTarget = 1.0f;
+            }
+            else                             // stop: fade out (keep reading the source until it lands)
+            {
+                auditionFadeTarget = 0.0f;
             }
         }
-        auditionActive.store (playing);
-        if (! playing) auditionPlayIdx = -1;   // idle until the next trigger
+
+        if (auditionPlayIdx >= 0 && (auditionFade > 0.0f || auditionFadeTarget > 0.0f))
+        {
+            const auto&  src   = auditionBuf[auditionPlayIdx];
+            const int    srcN  = src.getNumSamples();
+            const int    srcCh = src.getNumChannels();
+            const double ratio = auditionBufRate[auditionPlayIdx] / currentSampleRate;
+
+            for (int i = 0; i < numSamples; ++i)
+            {
+                if      (auditionFade < auditionFadeTarget) auditionFade = juce::jmin (auditionFadeTarget, auditionFade + auditionFadeStep);
+                else if (auditionFade > auditionFadeTarget) auditionFade = juce::jmax (auditionFadeTarget, auditionFade - auditionFadeStep);
+
+                const bool  haveSrc = auditionPos < (double) srcN;
+                const int   i0 = haveSrc ? (int) auditionPos : 0;
+                const int   i1 = juce::jmin (i0 + 1, srcN - 1);
+                const float fr = haveSrc ? (float) (auditionPos - (double) i0) : 0.0f;
+
+                for (int ch = 0; ch < numCh; ++ch)
+                {
+                    const int   sc = juce::jmin (ch, srcCh - 1);
+                    const float a  = haveSrc ? (src.getSample (sc, i0) * (1.0f - fr) + src.getSample (sc, i1) * fr) : 0.0f;
+                    const float mixed = mainOut.getSample (ch, i) * (1.0f - auditionFade) + a * auditionFade;
+                    mainOut.setSample (ch, i, convo::softClip (mixed));
+                }
+
+                if (haveSrc) auditionPos += ratio;
+            }
+
+            if (auditionPos >= (double) srcN) auditionFadeTarget = 0.0f;              // reached the end -> fade out
+            if (auditionFadeTarget <= 0.0f && auditionFade <= 0.0f) auditionPlayIdx = -1;   // faded out -> idle
+        }
+
+        // "playing" for the editor: soloing or fading in, but not while fading back out to a stop
+        auditionActive.store (auditionPlayIdx >= 0 && auditionFadeTarget > 0.0f);
     }
 
     // output meter (decaying peak hold, same as the input meter)

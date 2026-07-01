@@ -222,6 +222,9 @@ private:
     int    auditionGenSeen = 0;                       // audio-thread local
     int    auditionPlayIdx = -1;                      // audio-thread local
     double auditionPos = 0.0;                         // audio-thread local read position (source samples)
+    float  auditionFade = 0.0f;                       // audio-thread local crossfade level (0 = mix, 1 = IR)
+    float  auditionFadeTarget = 0.0f;                 // ramp target: 1 while playing, 0 while stopping/ended
+    float  auditionFadeStep = 1.0f;                   // per-sample crossfade increment (set in prepareToPlay)
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessor)
 };
