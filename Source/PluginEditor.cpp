@@ -1370,6 +1370,22 @@ void ConvoAudioProcessorEditor::timerCallback()
     animText (irNormButton,      normLit,    irNormButton.getToggleState()  ? 1.0f : 0.0f,       ConvoColours::label, ConvoColours::mint);
     animText (auditionSrcButton, bakedBlend, auditionSrcButton.getToggleState() ? 1.0f : 0.0f,   ConvoColours::mint,  ConvoColours::copper);
 
+    // fade-in limit: a mint dot on the knob's arc marks the longest usable fade-in (leaves
+    // >= kMinTailMs of IR), and the param is clamped down when the available (decay-cut) length
+    // shrinks past it — so a long fade can't swallow the decay cut and re-bake a near-full IR.
+    {
+        const double maxMs = processor.getMaxFadeInMs();
+        const float  prop  = (maxMs > 0.0) ? (float) fadeInSlider.valueToProportionOfLength (maxMs) : -1.0f;
+        if (std::abs (prop - fadeMaxShown) > 0.001f)
+        {
+            fadeMaxShown = prop;
+            fadeInSlider.getProperties().set ("fadeMax", prop);
+            fadeInSlider.repaint();
+        }
+        if (maxMs > 0.0 && ! fadeInSlider.isMouseButtonDown() && fadeInSlider.getValue() > maxMs + 1.0)
+            fadeInSlider.setValue (maxMs, juce::sendNotificationSync);
+    }
+
     const auto name = processor.getIRLibrary().getDisplayName();
     if (name != lastFileName)
     {

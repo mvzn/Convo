@@ -188,6 +188,7 @@ private:
                          filterPanel, postPanel, volumePanel, duckPanel, shapePanel, charPanel;
     juce::Rectangle<int> aboutZone;        // small "i" hotspot by the tagline (AGPL legal notice)
     bool updateNoticeSeen = false;         // repaint the "i" once when the async update check lands
+    float fadeMaxShown = -2.0f;            // last-painted fade-in limit marker (arc proportion), -1 = none
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessorEditor)
 };

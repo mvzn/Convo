@@ -142,6 +142,14 @@ public:
     static juce::AudioBuffer<float> bake (const juce::AudioBuffer<float>& raw, double irSampleRate,
                                           const IRBakeParams& bp);
 
+    /** The longest usable fade-in (ms) for the given raw IR + bake params: the decay-cut
+        length (after trim + stretch) minus kMinTailMs, so a fade-in can never swallow the
+        cut. Drives the fade-in knob's max marker and the editor's fade-in clamp; bake()
+        applies the same cap internally. Returns 0 for an empty/invalid IR. */
+    static double maxFadeInMs (int rawNumSamples, double irSampleRate, const IRBakeParams& bp);
+
+    static constexpr float kMinTailMs = 25.0f;   // min IR kept after a fade-in (never fully swallowed)
+
     /** Test canary only: the latency JUCE reports for the long (non-uniform) engine.
         Must stay 0 — NonUniform compensates the tail latency. Cross-checked against the
         live engine so a JUCE upgrade that changes the rule fails loudly. */

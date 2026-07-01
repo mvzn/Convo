@@ -131,6 +131,21 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
         g.strokePath (value, PathStrokeType (lineW, PathStrokeType::curved, PathStrokeType::rounded));
     }
 
+    // --- fade-in limit marker: a mint dot on the arc at the longest usable fade-in (the "fadeMax"
+    //     property, an arc proportion 0..1). Only the fade-in knob sets it; -1 elsewhere -> skipped. ---
+    const float fadeMax = (float) slider.getProperties().getWithDefault ("fadeMax", -1.0);
+    if (fadeMax >= 0.0f && fadeMax <= 1.0f)
+    {
+        const float ma = rotaryStartAngle + fadeMax * (rotaryEndAngle - rotaryStartAngle);
+        const Point<float> md (std::cos (ma - MathConstants<float>::halfPi), std::sin (ma - MathConstants<float>::halfPi));
+        const Point<float> mp = centre + md * arcR;
+        const float mr = jmax (2.0f, lineW * 0.6f);
+        g.setColour (Colours::black.withAlpha (0.5f));            // thin dark rim so it reads on the arc
+        g.fillEllipse (Rectangle<float> (mr * 2.0f + 1.5f, mr * 2.0f + 1.5f).withCentre (mp));
+        g.setColour (ConvoColours::mint);
+        g.fillEllipse (Rectangle<float> (mr * 2.0f, mr * 2.0f).withCentre (mp));
+    }
+
     // --- live gain-reduction probe (Duck knob): a thin mint arc in the gap just inside the
     //     value track. It hangs off the set-duck position and recedes toward the start as the
     //     wet is pulled down (full reduction sweeps the whole value arc). The "gr" property is

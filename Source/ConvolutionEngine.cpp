@@ -147,10 +147,20 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
             std::reverse (d, d + len);
         }
 
-    // 2. fade-in: raised-cosine ramp 0 -> 1 over the first fadeInSamps, capped at 80% of
-    //    the sample so the longest fade still leaves a fifth of the IR at full level
-    const int fadeInMax  = (int) (0.8 * (double) len);
-    const int fadeInSamps = juce::jlimit (0, fadeInMax, (int) std::round (bp.fadeInMs * 0.001 * irSampleRate));
+    // 2. decay-cut length: the -60 dB point as a fraction of the baked (trim+stretch) length,
+    //    computed BEFORE the fade-in so a fade-in can never extend the kernel past the cut (the
+    //    old code seeded lEff from fadeInSamps, so a long fade re-baked a near-full IR at Decay
+    //    100%). decayOff / fraction >= 1 keeps the full length. Mirrors maxFadeInMs().
+    int lEff = len;
+    if (! bp.decayOff && bp.decayFraction < 1.0f)
+        lEff = juce::jlimit (1, len, (int) std::ceil ((double) bp.decayFraction * (double) len));
+
+    // 3. fade-in: raised-cosine ramp 0 -> 1 over the first fadeInSamps, capped so at least
+    //    kMinTailMs of IR survives within the kept (decay-cut) length — beyond that the fade
+    //    would swallow the whole kernel.
+    const int minTailSamps = juce::jmax (1, (int) std::round (kMinTailMs * 0.001 * irSampleRate));
+    const int fadeInMax    = juce::jmax (0, lEff - minTailSamps);
+    const int fadeInSamps  = juce::jlimit (0, fadeInMax, (int) std::round (bp.fadeInMs * 0.001 * irSampleRate));
     for (int i = 0; i < fadeInSamps; ++i)
     {
         const float x = (float) i / (float) fadeInSamps;                                   // 0..1
@@ -159,25 +169,19 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
             out.getWritePointer (ch)[i] *= g;
     }
 
-    // 3. decay: impose exp decay (-60 dB at decaySamps) from the end of fade-in, and truncate
-    //    where it crosses -60 dB to save CPU. decayOff => tail as recorded. The -60 dB point is
-    //    a fraction of the *baked* length (post trim + stretch), so the decay always starts from
-    //    the set length and shortens from there — no dead zone. The envelope is accumulated
-    //    incrementally (g *= step) instead of a pow() per sample — identical math, far cheaper.
-    int lEff = len;
+    // 4. decay: exp envelope over [fadeInSamps, lEff), reaching ~-60 dB by the cut point. With no
+    //    fade-in this is the same rate as the old decaySamps = decayFraction*len; a fade-in just
+    //    compresses the decay into the shorter remaining span rather than lengthening the kernel.
+    //    Accumulated incrementally (g *= step) — identical math to a per-sample pow(), far cheaper.
     if (! bp.decayOff && bp.decayFraction < 1.0f)
     {
-        const double decaySamps = juce::jmax (1.0, (double) bp.decayFraction * (double) len);
-        const double step       = std::pow (10.0, -3.0 / decaySamps);   // per-sample ratio
-        double g = 1.0;                                                 // 10^(-3*0/decaySamps)
-        lEff = fadeInSamps;
-        for (int i = fadeInSamps; i < len; ++i)
+        const double decSpan = juce::jmax (1.0, (double) (lEff - fadeInSamps));
+        const double step    = std::pow (10.0, -3.0 / decSpan);        // per-sample ratio -> -60 dB at lEff
+        double g = 1.0;
+        for (int i = fadeInSamps; i < lEff; ++i)
         {
-            if (g < 0.001)            // -60 dB
-                break;
             for (int ch = 0; ch < numCh; ++ch)
                 out.getWritePointer (ch)[i] *= (float) g;
-            lEff = i + 1;
             g *= step;
         }
     }
@@ -292,6 +296,32 @@ juce::AudioBuffer<float> ConvolutionEngine::bake (const juce::AudioBuffer<float>
     }
 
     return out;
+}
+
+double ConvolutionEngine::maxFadeInMs (int rawNumSamples, double irSampleRate, const IRBakeParams& bp)
+{
+    if (rawNumSamples <= 0 || irSampleRate <= 0.0)
+        return 0.0;
+
+    // mirror bake()'s length pipeline: trim (with the reverse-coordinate mirror) -> stretch -> decay cut
+    float s = juce::jlimit (0.0f, 1.0f, bp.startFrac);
+    float e = juce::jlimit (0.0f, 1.0f, bp.endFrac);
+    if (bp.reverse) { const float ms = 1.0f - e, me = 1.0f - s; s = ms; e = me; }
+    const int first = juce::jlimit (0, rawNumSamples - 1, (int) std::floor ((double) s * (double) rawNumSamples));
+    int       last  = juce::jlimit (0, rawNumSamples,     (int) std::ceil  ((double) e * (double) rawNumSamples));
+    if (last <= first) last = first + 1;
+    int n = last - first;
+
+    if (! juce::approximatelyEqual (bp.stretch, 1.0f) && bp.stretch > 0.0f && n > 1)
+        n = juce::jlimit (1, 1 << 24, (int) std::lround ((double) n * (double) bp.stretch));
+
+    int lEff = n;
+    if (! bp.decayOff && bp.decayFraction < 1.0f)
+        lEff = juce::jlimit (1, n, (int) std::ceil ((double) bp.decayFraction * (double) n));
+
+    const int minTailSamps = juce::jmax (1, (int) std::round (kMinTailMs * 0.001 * irSampleRate));
+    const int maxFadeSamps = juce::jmax (0, lEff - minTailSamps);
+    return (double) maxFadeSamps / irSampleRate * 1000.0;
 }
 
 void ConvolutionEngine::loadInto (int engineIndex, const juce::AudioBuffer<float>& baked, double irSampleRate)

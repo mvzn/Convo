@@ -871,6 +871,15 @@ IRBakeParams ConvoAudioProcessor::currentBakeParams() const
     return p;
 }
 
+double ConvoAudioProcessor::getMaxFadeInMs() const
+{
+    if (! irLibrary.hasIR())
+        return 0.0;
+    return ConvolutionEngine::maxFadeInMs (irLibrary.getIR().getNumSamples(),
+                                           irLibrary.getSampleRate(),
+                                           currentBakeParams());
+}
+
 void ConvoAudioProcessor::timerCallback()
 {
     // state restore lands here so file IO and IR baking stay on the message thread

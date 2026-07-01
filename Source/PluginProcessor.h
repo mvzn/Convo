@@ -94,6 +94,10 @@ public:
     double getBakedIRSampleRate() const noexcept { return bakedIRSampleRate; }
     const juce::AudioBuffer<float>& getKernelIR() const noexcept { return audioBakeScratch; }  // trimmed+shaped kernel (the selection layer)
 
+    // Longest usable fade-in (ms) for the current IR + bake settings; drives the fade-in
+    // knob's limit marker and clamp. 0 when no IR is loaded. Message thread.
+    double getMaxFadeInMs() const;
+
     // IR audition (call on the message thread): play the IR through the output, soloing it.
     // baked = the processed kernel (after trim/stretch/decay/etc.); !baked = the raw decoded IR.
     // Editor-only convenience — audio still runs without the editor.
