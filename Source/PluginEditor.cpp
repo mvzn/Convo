@@ -16,6 +16,7 @@
 */
 
 #include "PluginEditor.h"
+#include "UpdateCheck.h"
 
 namespace
 {
@@ -49,6 +50,8 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 {
     setLookAndFeel (&lookAndFeel);
     setOpaque (true);                       // paint() covers everything — skip host compositing
+
+    convo::updateInfo();                    // kick off the once-per-process "newer release?" check
 
     thumbnailFormatManager.registerBasicFormats();
     thumbnail = std::make_unique<juce::AudioThumbnail> (512, thumbnailFormatManager, thumbnailCache);
@@ -493,10 +496,12 @@ void ConvoAudioProcessorEditor::drawChromeText (juce::Graphics& g)
         g.drawText ("CONVOLUTION", h.withTrimmedLeft (12), juce::Justification::centredLeft);
     }
 
-    // "i" info affordance for the about / AGPL legal notice (click handled in mouseDown)
+    // "i" info affordance for the about / AGPL legal notice (click handled in mouseDown).
+    // Turns copper when a newer release is available, as a nudge to open the popup.
     {
-        const auto a = aboutZone.toFloat();
-        g.setColour (ConvoColours::textDim);
+        const bool upd = convo::updateInfo()->available.load (std::memory_order_acquire);
+        const auto a   = aboutZone.toFloat();
+        g.setColour (upd ? ConvoColours::copper : ConvoColours::textDim);
         g.drawEllipse (a.reduced (1.5f), 1.0f);
         g.setFont (juce::Font (juce::FontOptions (10.0f, juce::Font::bold)));
         g.drawText ("i", aboutZone, juce::Justification::centred);
@@ -944,7 +949,19 @@ void ConvoAudioProcessorEditor::showIRContextMenu()
 // reliably, but launchInDefaultBrowser is the conventional path for the source/licence links.
 void ConvoAudioProcessorEditor::showAboutMenu()
 {
+    auto upd = convo::updateInfo();
     juce::PopupMenu m;
+
+    if (upd->available.load (std::memory_order_acquire))   // newer release out — copper call-to-action on top
+    {
+        juce::PopupMenu::Item item;
+        item.itemID = 12;
+        item.text   = "Update available: v" + upd->latestVersion;
+        item.colour = ConvoColours::copper;
+        m.addItem (item);
+        m.addSeparator();
+    }
+
     m.addSectionHeader ("Convo - convolution audio effect");
     m.addItem (1, juce::String::fromUTF8 ("\xC2\xA9 2026 mvzn"),                false, false);   // © 2026 mvzn
     m.addItem (2, "Free software under the GNU AGPLv3",                         false, false);
@@ -955,10 +972,11 @@ void ConvoAudioProcessorEditor::showAboutMenu()
     m.addItem (11, "View the AGPLv3 licence");
 
     m.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (this),
-        [] (int r)
+        [upd] (int r)
         {
             if      (r == 10) juce::URL ("https://github.com/mvzn/Convo").launchInDefaultBrowser();
             else if (r == 11) juce::URL ("https://www.gnu.org/licenses/agpl-3.0.html").launchInDefaultBrowser();
+            else if (r == 12) juce::URL (upd->releaseUrl).launchInDefaultBrowser();
         });
 }
 
@@ -1302,6 +1320,13 @@ void ConvoAudioProcessorEditor::changeListenerCallback (juce::ChangeBroadcaster*
 
 void ConvoAudioProcessorEditor::timerCallback()
 {
+    // the update check completes asynchronously; repaint the "i" once when it flips available
+    if (! updateNoticeSeen && convo::updateInfo()->available.load (std::memory_order_acquire))
+    {
+        updateNoticeSeen = true;
+        repaint (aboutZone.expanded (2));
+    }
+
     inMeter  = processor.getInputLevel();
     outMeter = processor.getOutputLevel();
     inPeak   = juce::jmax (inMeter,  inPeak  * 0.96f);   // peak line falls slower than the bar
