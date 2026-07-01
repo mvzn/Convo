@@ -74,6 +74,11 @@ public:
     // A preset is the plugin's APVTS state (the same XML getStateInformation writes,
     // including the irPath property). Presets live as *.xml files in a Documents folder.
     static juce::File getPresetsFolder();                       // created if missing
+    static juce::File getIRsFolder();                           // Documents/Convo/IRs — shared IR home (created if missing)
+    // Resolve a stored irPath portably: the absolute path if it exists on this machine,
+    // else the same filename in the shared IRs folder (so a preset built on a given IR
+    // still finds it on another machine where that IR is installed), else the original.
+    static juce::File resolveIRPath (const juce::String& storedPath);
     juce::Array<juce::File> getPresetFiles() const;             // sorted *.xml in the folder
     bool savePreset (const juce::String& presetName);           // write current state -> <name>.xml
     bool loadPreset (const juce::File& presetFile);             // restore state from a preset file

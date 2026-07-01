@@ -862,7 +862,7 @@ void ConvoAudioProcessor::timerCallback()
             const juce::ScopedLock l (pendingIRPathLock);
             path.swapWith (pendingIRPath);
         }
-        const juce::File f (path);
+        const juce::File f = resolveIRPath (path);
         if (f.existsAsFile())
             loadIRFile (f);
     }
@@ -949,6 +949,34 @@ juce::File ConvoAudioProcessor::getPresetsFolder()
     return folder;
 }
 
+juce::File ConvoAudioProcessor::getIRsFolder()
+{
+    auto folder = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory)
+                      .getChildFile ("Convo").getChildFile ("IRs");
+    if (! folder.isDirectory())
+        folder.createDirectory();
+    return folder;
+}
+
+juce::File ConvoAudioProcessor::resolveIRPath (const juce::String& storedPath)
+{
+    if (storedPath.isEmpty())
+        return {};
+
+    const juce::File direct (storedPath);
+    if (direct.existsAsFile())
+        return direct;                                        // exact path on this machine — unchanged
+
+    // portability fallback: same filename in the shared IRs folder. Only reached when the
+    // stored absolute path is gone (e.g. a preset moved between machines), so it never
+    // changes behaviour for an in-place session that already resolves.
+    const auto byName = getIRsFolder().getChildFile (direct.getFileName());
+    if (byName.existsAsFile())
+        return byName;
+
+    return direct;   // not found anywhere; the caller's existsAsFile() check fails as before
+}
+
 juce::Array<juce::File> ConvoAudioProcessor::getPresetFiles() const
 {
     juce::Array<juce::File> files;
@@ -992,7 +1020,7 @@ bool ConvoAudioProcessor::loadPreset (const juce::File& presetFile)
     const auto path = apvts.state.getProperty ("irPath").toString();
     if (path.isNotEmpty())
     {
-        const juce::File f (path);
+        const juce::File f = resolveIRPath (path);
         if (f.existsAsFile())
             loadIRFile (f);
     }
