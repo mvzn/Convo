@@ -255,7 +255,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     rebuildThumbnail();
 
-    setSize (900, 617);   // +7 px vs. before to keep the bottom row clear of the wider header gap
+    setSize (900, 613);   // +7 px vs. before to keep the bottom row clear of the wider header gap
     startTimerHz (30);
 }
 
