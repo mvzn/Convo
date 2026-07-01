@@ -1,6 +1,6 @@
 # Convo
 
-A simple, MIDI-free **convolution audio effect**. Drop an impulse response, hear your
+A simple **convolution audio effect**. Drop an impulse response, hear your
 signal convolved with it. Free and open source (AGPLv3).
 
 Convo is a focused convolver: no MIDI, no ADSR, no transposition. Just a clean
