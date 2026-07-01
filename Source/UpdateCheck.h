@@ -30,9 +30,9 @@
     lives on a shared_ptr that outlives the fetch thread, so it is safe regardless of
     editor lifetime.
 
-    Note: HTTP is done through juce::URL, which uses the OS stack on Windows/macOS. On
-    Linux with JUCE_USE_CURL=0 there is no HTTPS support, so the check is a graceful
-    no-op there (set JUCE_USE_CURL=1 + link libcurl to enable it).
+    Note: HTTP is done through juce::URL — the OS stack on Windows/macOS, and libcurl on
+    Linux (JUCE_USE_CURL=1, set in CMakeLists). It still fails silently if the request
+    can't complete (offline, timeout, etc.).
 */
 namespace convo
 {

@@ -42,6 +42,7 @@ juce_add_plugin(Convo
     NEEDS_MIDI_INPUT         FALSE
     NEEDS_MIDI_OUTPUT        FALSE
     IS_MIDI_EFFECT           FALSE
+    NEEDS_CURL               TRUE     # link libcurl on Linux for the update check (JUCE_USE_CURL=1); no-op on Win/mac
     VST3_CATEGORIES          "Fx" "Reverb"
     AU_MAIN_TYPE             "kAudioUnitType_Effect"
     COPY_PLUGIN_AFTER_BUILD  TRUE
@@ -59,7 +60,7 @@ target_sources(Convo PRIVATE
 
 target_compile_definitions(Convo PRIVATE
     JUCE_WEB_BROWSER=0
-    JUCE_USE_CURL=0
+    JUCE_USE_CURL=1              # HTTPS on Linux (the in-plugin update check); needs libcurl-dev
     JUCE_USE_MP3AUDIOFORMAT=1     # enable .mp3 decoding
     JUCE_USE_OGGVORBIS=1          # .ogg (default on, explicit for clarity)
     JUCE_VST3_CAN_REPLACE_VST2=0
