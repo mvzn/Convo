@@ -109,6 +109,7 @@ private:
     void renderWaveImage();            // full-IR waveform -> waveImage (the trim backdrop)
     void renderKernelImage();          // trimmed+shaped kernel -> kernelImage (the selection layer)
     float irGainVisualGain() const;    // IR Gain as a linear factor -> waveform vertical zoom
+    float waveVisualZoom (float layerPeak) const;   // per-layer zoom: height ∝ (peak x IR Gain)^0.5
     void drawMeterFill (juce::Graphics&, juce::Rectangle<int> zone, float level, float peak,
                         const juce::ColourGradient& fill);
     void renderOverlay();              // (re)build the cached EQ curve + bass-mono marker on param/size change
@@ -220,6 +221,9 @@ private:
     juce::Rectangle<int> aboutZone;        // small "i" hotspot by the tagline (AGPL legal notice)
     bool updateNoticeSeen = false;         // repaint the "i" once when the async update check lands
     float fadeMaxShown = -2.0f;            // last-painted fade-in limit tick (arc proportion), -1 = none
+    // true peaks of the (peak-normalized) thumbnail layers — the 8-bit thumbnail cache
+    // holds unit-peak data; these put the real level back in via waveVisualZoom
+    float waveDispPeak = 0.0f, kernelDispPeak = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessorEditor)
 };

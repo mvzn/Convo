@@ -321,11 +321,20 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
         thumbnail = std::make_unique<juce::AudioThumbnail> (srcPerPoint, thumbnailFormatManager, thumbnailCache);
         thumbnail->addChangeListener (this);
         thumbnail->reset (ir.getNumChannels(), sr, n);
-        thumbnail->addBlock (0, ir, 0, n);
+        // feed the thumbnail PEAK-NORMALIZED data: its cache is 8-bit, so a quiet kernel
+        // (e.g. Norm IR on) would quantize to a couple of steps and draw as a solid bar
+        // once zoomed. The true level goes back in as the draw zoom (waveVisualZoom).
+        waveDispPeak = ir.getMagnitude (0, n);
+        juce::AudioBuffer<float> scaled;
+        scaled.makeCopyOf (ir);
+        if (waveDispPeak > 1.0e-9f)
+            scaled.applyGain (1.0f / waveDispPeak);
+        thumbnail->addBlock (0, scaled, 0, n);
     }
     else
     {
         thumbnail->clear();
+        waveDispPeak = 0.0f;
     }
 
     // kernel layer: the trimmed+shaped audio kernel, shown sharp inside the trim selection.
@@ -340,13 +349,20 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
             kernelThumbnail = std::make_unique<juce::AudioThumbnail> (juce::jmax (1, kn / 1400),
                                                                       thumbnailFormatManager, kernelThumbnailCache);
             kernelThumbnail->reset (kir.getNumChannels(), ksr, kn);
-            kernelThumbnail->addBlock (0, kir, 0, kn);
+            // peak-normalized for the 8-bit thumbnail cache, same as the backdrop above
+            kernelDispPeak = kir.getMagnitude (0, kn);
+            juce::AudioBuffer<float> scaled;
+            scaled.makeCopyOf (kir);
+            if (kernelDispPeak > 1.0e-9f)
+                scaled.applyGain (1.0f / kernelDispPeak);
+            kernelThumbnail->addBlock (0, scaled, 0, kn);
             bakedLenSeconds = kn / ksr;
             bakedLenText = juce::String (bakedLenSeconds, 2) + " s";
         }
         else
         {
             if (kernelThumbnail != nullptr) kernelThumbnail->clear();
+            kernelDispPeak  = 0.0f;
             bakedLenSeconds = 0.0;
             bakedLenText.clear();
         }
@@ -381,7 +397,8 @@ void ConvoAudioProcessorEditor::renderWaveImage()
     g.setGradientFill (juce::ColourGradient (ConvoColours::mint, 0.0f, 0.0f,
                                              ConvoColours::teal.withAlpha (0.75f),
                                              0.0f, (float) local.getHeight(), false));
-    thumbnail->drawChannels (g, local, 0.0, thumbnail->getTotalLength(), irGainVisualGain());
+    thumbnail->drawChannels (g, local, 0.0, thumbnail->getTotalLength(),
+                             waveVisualZoom (waveDispPeak));
 
     // a blurred copy, built once here (never per frame), so the trim preview can show the
     // unselected head/tail out of focus at zero per-paint cost
@@ -412,7 +429,8 @@ void ConvoAudioProcessorEditor::renderKernelImage()
     g.setGradientFill (juce::ColourGradient (ConvoColours::mint, 0.0f, 0.0f,
                                              ConvoColours::teal.withAlpha (0.75f),
                                              0.0f, (float) local.getHeight(), false));
-    kernelThumbnail->drawChannels (g, local, 0.0, kernelThumbnail->getTotalLength(), irGainVisualGain());
+    kernelThumbnail->drawChannels (g, local, 0.0, kernelThumbnail->getTotalLength(),
+                                   waveVisualZoom (kernelDispPeak));
 }
 
 // IR Gain mapped to the waveform's vertical zoom, so the displayed amplitude tracks the wet
@@ -421,6 +439,20 @@ float ConvoAudioProcessorEditor::irGainVisualGain() const
 {
     return juce::Decibels::decibelsToGain (
         processor.getAPVTS().getRawParameterValue ("irGain")->load(), -60.0f);
+}
+
+// Vertical zoom for one waveform layer: the drawn height tracks the layer's true level
+// (its peak x IR Gain) through a square-root law — height ∝ level^0.5, i.e. half the dB
+// distance — so a big level-policy step (Norm IR) still reads clearly bigger/smaller
+// without the waveform vanishing or exploding. Applied as a uniform per-layer zoom, the
+// waveform's internal shape (tail decay, transients) stays linear-true; only the overall
+// height between layers/states is compressed. Full scale still lands at full height.
+// The thumbnail data is peak-normalized (see rebuildThumbnail — the cache is 8-bit), so
+// the zoom IS the drawn height: layerPeak is the remembered true peak of that layer.
+float ConvoAudioProcessorEditor::waveVisualZoom (float layerPeak) const
+{
+    const float level = layerPeak * irGainVisualGain();
+    return level > 1.0e-12f ? std::sqrt (level) : 0.0f;
 }
 
 void ConvoAudioProcessorEditor::renderBackground()
