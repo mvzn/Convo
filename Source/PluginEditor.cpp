@@ -108,7 +108,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
                                "so tails ring out");
     inHPSlider.setTooltip ("Pre-IR high-pass (low cut), 12 dB/oct, on the signal feeding the IR");
     inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 12 dB/oct, on the signal feeding the IR");
-    fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp is capped at 80% of the IR length");
+    fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp adapts to the IR and shrinks with the decay cut (leaves a short tail), up to 10 s");
     msBassSlider.setTooltip ("Bass Mono crossover: the wet collapses to mono below this frequency "
                              "and stays stereo above it. 20 Hz = off; turn it up to engage Bass Mono");
     filterIRButton.setTooltip ("Apply the In HP/In LP filter to the IR (baked, shown in the "
@@ -257,6 +257,11 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     setSize (900, 613);   // +7 px vs. before to keep the bottom row clear of the wider header gap
     startTimerHz (30);
+
+   #if JUCE_DEBUG
+    setWantsKeyboardFocus (true);
+    grabKeyboardFocus();
+   #endif
 }
 
 ConvoAudioProcessorEditor::~ConvoAudioProcessorEditor()
@@ -265,6 +270,34 @@ ConvoAudioProcessorEditor::~ConvoAudioProcessorEditor()
     thumbnail->removeChangeListener (this);
     setLookAndFeel (nullptr);
 }
+
+#if JUCE_DEBUG
+bool ConvoAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress ('s', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0))
+    {
+        saveSupersampledScreenshot();
+        return true;
+    }
+    return false;
+}
+
+// Renders the editor (and all its children) into an off-screen image at kSupersample x its
+// logical size — resolution-independent since almost everything here is vector/text, not
+// bitmaps — and writes it as a lossless PNG to the desktop. Cmd/Ctrl+Shift+S.
+void ConvoAudioProcessorEditor::saveSupersampledScreenshot()
+{
+    constexpr float kSupersample = 4.0f;
+    auto image = createComponentSnapshot (getLocalBounds(), true, kSupersample);
+
+    auto file = juce::File::getSpecialLocation (juce::File::userDesktopDirectory)
+                    .getNonexistentChildFile ("Convo_screenshot", ".png");
+
+    juce::PNGImageFormat png;
+    if (auto stream = file.createOutputStream())
+        png.writeImageToStream (image, *stream);
+}
+#endif
 
 float ConvoAudioProcessorEditor::uiScale() const
 {
@@ -288,11 +321,20 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
         thumbnail = std::make_unique<juce::AudioThumbnail> (srcPerPoint, thumbnailFormatManager, thumbnailCache);
         thumbnail->addChangeListener (this);
         thumbnail->reset (ir.getNumChannels(), sr, n);
-        thumbnail->addBlock (0, ir, 0, n);
+        // feed the thumbnail PEAK-NORMALIZED data: its cache is 8-bit, so a quiet kernel
+        // (e.g. Norm IR on) would quantize to a couple of steps and draw as a solid bar
+        // once zoomed. The true level goes back in as the draw zoom (waveVisualZoom).
+        waveDispPeak = ir.getMagnitude (0, n);
+        juce::AudioBuffer<float> scaled;
+        scaled.makeCopyOf (ir);
+        if (waveDispPeak > 1.0e-9f)
+            scaled.applyGain (1.0f / waveDispPeak);
+        thumbnail->addBlock (0, scaled, 0, n);
     }
     else
     {
         thumbnail->clear();
+        waveDispPeak = 0.0f;
     }
 
     // kernel layer: the trimmed+shaped audio kernel, shown sharp inside the trim selection.
@@ -307,13 +349,20 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
             kernelThumbnail = std::make_unique<juce::AudioThumbnail> (juce::jmax (1, kn / 1400),
                                                                       thumbnailFormatManager, kernelThumbnailCache);
             kernelThumbnail->reset (kir.getNumChannels(), ksr, kn);
-            kernelThumbnail->addBlock (0, kir, 0, kn);
+            // peak-normalized for the 8-bit thumbnail cache, same as the backdrop above
+            kernelDispPeak = kir.getMagnitude (0, kn);
+            juce::AudioBuffer<float> scaled;
+            scaled.makeCopyOf (kir);
+            if (kernelDispPeak > 1.0e-9f)
+                scaled.applyGain (1.0f / kernelDispPeak);
+            kernelThumbnail->addBlock (0, scaled, 0, kn);
             bakedLenSeconds = kn / ksr;
             bakedLenText = juce::String (bakedLenSeconds, 2) + " s";
         }
         else
         {
             if (kernelThumbnail != nullptr) kernelThumbnail->clear();
+            kernelDispPeak  = 0.0f;
             bakedLenSeconds = 0.0;
             bakedLenText.clear();
         }
@@ -348,7 +397,8 @@ void ConvoAudioProcessorEditor::renderWaveImage()
     g.setGradientFill (juce::ColourGradient (ConvoColours::mint, 0.0f, 0.0f,
                                              ConvoColours::teal.withAlpha (0.75f),
                                              0.0f, (float) local.getHeight(), false));
-    thumbnail->drawChannels (g, local, 0.0, thumbnail->getTotalLength(), irGainVisualGain());
+    thumbnail->drawChannels (g, local, 0.0, thumbnail->getTotalLength(),
+                             waveVisualZoom (waveDispPeak));
 
     // a blurred copy, built once here (never per frame), so the trim preview can show the
     // unselected head/tail out of focus at zero per-paint cost
@@ -379,7 +429,8 @@ void ConvoAudioProcessorEditor::renderKernelImage()
     g.setGradientFill (juce::ColourGradient (ConvoColours::mint, 0.0f, 0.0f,
                                              ConvoColours::teal.withAlpha (0.75f),
                                              0.0f, (float) local.getHeight(), false));
-    kernelThumbnail->drawChannels (g, local, 0.0, kernelThumbnail->getTotalLength(), irGainVisualGain());
+    kernelThumbnail->drawChannels (g, local, 0.0, kernelThumbnail->getTotalLength(),
+                                   waveVisualZoom (kernelDispPeak));
 }
 
 // IR Gain mapped to the waveform's vertical zoom, so the displayed amplitude tracks the wet
@@ -388,6 +439,20 @@ float ConvoAudioProcessorEditor::irGainVisualGain() const
 {
     return juce::Decibels::decibelsToGain (
         processor.getAPVTS().getRawParameterValue ("irGain")->load(), -60.0f);
+}
+
+// Vertical zoom for one waveform layer: the drawn height tracks the layer's true level
+// (its peak x IR Gain) through a square-root law — height ∝ level^0.5, i.e. half the dB
+// distance — so a big level-policy step (Norm IR) still reads clearly bigger/smaller
+// without the waveform vanishing or exploding. Applied as a uniform per-layer zoom, the
+// waveform's internal shape (tail decay, transients) stays linear-true; only the overall
+// height between layers/states is compressed. Full scale still lands at full height.
+// The thumbnail data is peak-normalized (see rebuildThumbnail — the cache is 8-bit), so
+// the zoom IS the drawn height: layerPeak is the remembered true peak of that layer.
+float ConvoAudioProcessorEditor::waveVisualZoom (float layerPeak) const
+{
+    const float level = layerPeak * irGainVisualGain();
+    return level > 1.0e-12f ? std::sqrt (level) : 0.0f;
 }
 
 void ConvoAudioProcessorEditor::renderBackground()
@@ -415,7 +480,7 @@ void ConvoAudioProcessorEditor::renderBackground()
         h.removeFromLeft (92);   // reserve the wordmark column so the tick lands beside it
 
         g.setColour (ConvoColours::mint.withAlpha (0.85f));
-        g.fillRect (h.getX() + 2, headerZone.getCentreY() - 8, 2, 16);
+        g.fillRect (h.getX(), headerZone.getCentreY() - 8, 2, 16);
 
         // engraved header rule: a dark cut + a 1 px catch-light just below, so the divider reads
         // as incised into the chassis (spans the full content width)
@@ -526,6 +591,7 @@ void ConvoAudioProcessorEditor::drawChromeText (juce::Graphics& g)
 // painting (everything heavy is pre-rendered; this just blits + dynamics)
 // ---------------------------------------------------------------------------
 
+// level/peak arrive as fill proportions on the -60..0 dBFS scale (mapped in timerCallback)
 void ConvoAudioProcessorEditor::drawMeterFill (juce::Graphics& g, juce::Rectangle<int> zone,
                                                float level, float peak, const juce::ColourGradient& fillGrad)
 {
@@ -552,7 +618,7 @@ void ConvoAudioProcessorEditor::drawMeterFill (juce::Graphics& g, juce::Rectangl
     if (p > 0.001f)
     {
         const float y = well.getBottom() - well.getHeight() * p;
-        g.setColour (p > 0.95f ? ConvoColours::clip : ConvoColours::mint.brighter (0.3f));
+        g.setColour (p > 0.983f ? ConvoColours::clip : ConvoColours::mint.brighter (0.3f));   // red above ~-1 dBFS
         g.fillRect (well.getX(), y - 1.0f, well.getWidth(), 2.0f);
     }
 }
@@ -1127,7 +1193,7 @@ void ConvoAudioProcessorEditor::resized()
         h.removeFromLeft (92);                                  // past the "Convo" wordmark
         const auto tag  = h.withTrimmedLeft (12);              // where the tagline starts (matches drawChromeText)
         const int  tagW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (captionFont(), "CONVOLUTION"));
-        aboutZone = juce::Rectangle<int> (tag.getX() + tagW + 9, headerZone.getCentreY() - 8, 16, 16);
+        aboutZone = juce::Rectangle<int> (tag.getX() + tagW + 9, headerZone.getCentreY() - 6, 12, 12);
     }
 
     area.removeFromTop (15);   // 12 px of clear space below the header rule -> matches the graph<->PRE/POST gap
@@ -1327,8 +1393,14 @@ void ConvoAudioProcessorEditor::timerCallback()
         repaint (aboutZone.expanded (2));
     }
 
-    inMeter  = processor.getInputLevel();
-    outMeter = processor.getOutputLevel();
+    // meters show a -60..0 dBFS scale (like DAW meters): the processor's linear peaks are mapped
+    // to fill proportion here, so the bar/peak decay below runs in fill (dB) space
+    auto dbFill = [] (float lin)
+    {
+        return juce::jmap (juce::Decibels::gainToDecibels (lin, -60.0f), -60.0f, 0.0f, 0.0f, 1.0f);
+    };
+    inMeter  = dbFill (processor.getInputLevel());
+    outMeter = dbFill (processor.getOutputLevel());
     inPeak   = juce::jmax (inMeter,  inPeak  * 0.96f);   // peak line falls slower than the bar
     outPeak  = juce::jmax (outMeter, outPeak * 0.96f);
     duckGR   = processor.getDuckGainReduction();
@@ -1370,20 +1442,26 @@ void ConvoAudioProcessorEditor::timerCallback()
     animText (irNormButton,      normLit,    irNormButton.getToggleState()  ? 1.0f : 0.0f,       ConvoColours::label, ConvoColours::mint);
     animText (auditionSrcButton, bakedBlend, auditionSrcButton.getToggleState() ? 1.0f : 0.0f,   ConvoColours::mint,  ConvoColours::copper);
 
-    // fade-in limit: a mint dot on the knob's arc marks the longest usable fade-in (leaves
-    // >= kMinTailMs of IR), and the param is clamped down when the available (decay-cut) length
-    // shrinks past it — so a long fade can't swallow the decay cut and re-bake a near-full IR.
+    // fade-in limit: the longest usable fade-in adapts to the IR and shrinks with the decay cut
+    // (leaves >= kMinTailMs of tail), so a 2 s IR caps the ramp near 1975 ms. Feed it to the slider
+    // as a hard cap so the thumb can't be dragged past it. The snap-back below still handles the
+    // case where the cap drops via *another* param (Decay / trim / stretch / a new IR) while the
+    // Fade In knob isn't being touched — snapValue only fires on direct interaction. The param
+    // range caps the absolute max at 10 s.
     {
         const double maxMs = processor.getMaxFadeInMs();
-        const float  prop  = (maxMs > 0.0) ? (float) fadeInSlider.valueToProportionOfLength (maxMs) : -1.0f;
+        fadeInSlider.setValueCap (maxMs > 0.0 ? maxMs : -1.0);
+        if (maxMs > 0.0 && ! fadeInSlider.isMouseButtonDown() && fadeInSlider.getValue() > maxMs + 1.0)
+            fadeInSlider.setValue (maxMs, juce::sendNotificationSync);
+
+        // a mint tick on the knob's arc marks the cap ("fadeMax" property, arc proportion 0..1)
+        const float prop = (maxMs > 0.0) ? (float) fadeInSlider.valueToProportionOfLength (maxMs) : -1.0f;
         if (std::abs (prop - fadeMaxShown) > 0.001f)
         {
             fadeMaxShown = prop;
             fadeInSlider.getProperties().set ("fadeMax", prop);
             fadeInSlider.repaint();
         }
-        if (maxMs > 0.0 && ! fadeInSlider.isMouseButtonDown() && fadeInSlider.getValue() > maxMs + 1.0)
-            fadeInSlider.setValue (maxMs, juce::sendNotificationSync);
     }
 
     const auto name = processor.getIRLibrary().getDisplayName();

@@ -29,23 +29,6 @@ static float mapFilterQ (float percent) noexcept
     return juce::jmap (juce::jlimit (0.0f, 100.0f, percent) * 0.01f, 0.707f, 6.0f);
 }
 
-// max-channel L2 energy of a baked kernel — the same loudness measure auto-level uses, so the
-// ratio of two kernels' energies is the convolution-loudness ratio between them. Published per
-// generation so the audio thread can keep a rebake loudness-neutral for Wet Comp.
-static float kernelEnergy (const juce::AudioBuffer<float>& k) noexcept
-{
-    double maxE = 0.0;
-    for (int ch = 0; ch < k.getNumChannels(); ++ch)
-    {
-        const float* h = k.getReadPointer (ch);
-        double e = 0.0;
-        for (int i = 0; i < k.getNumSamples(); ++i)
-            e += (double) h[i] * (double) h[i];
-        maxE = juce::jmax (maxE, e);
-    }
-    return (float) maxE;
-}
-
 ConvoAudioProcessor::ConvoAudioProcessor()
     : juce::AudioProcessor (BusesProperties()
         .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
@@ -347,8 +330,6 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     duckEnv         = 0.0f;
     gateGain        = 1.0f;
     wetCompTarget   = 1.0f;
-    bakeGenSeen       = bakeGeneration.load();      // adopt the current kernel without a spurious swap-snap
-    audioKernelEnergy = bakedKernelEnergy.load();
     prevFilterInput = true;
     prevToneActive  = prevInHpActive = prevInLpActive = prevBassActive
                     = prevPreDelayActive = true;
@@ -526,6 +507,22 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         gateGR.store (juce::jmax (maxGateGR, gateGR.load() * 0.85f));   // decaying peak hold for the Gate-knob indicator
     }
 
+    // kernel-swap loudness continuity: the engine crossfades level-stepping rebakes in at
+    // matched loudness and publishes the makeup when the flip completes (see
+    // ConvolutionEngine). Fold it into the comp smoother BEFORE this block's process() —
+    // a consumed flip is from a finished block, so the engine-side gain and this one never
+    // overlap. Deliberately unclamped: continuity first; the follower re-clamps to its
+    // ±18 dB range over its own 0.25 s ramp.
+    {
+        const float swapScale = convolution.consumeSwapCompScale();
+        if (wetCompActive && ! juce::approximatelyEqual (swapScale, 1.0f))
+        {
+            const float g = wetCompSm.getCurrentValue() * swapScale;
+            wetCompSm.setCurrentAndTargetValue (g);
+            wetCompTarget = g;   // hold the snapped value if the follower freezes (input quiet)
+        }
+    }
+
     convolution.process (wetBlock);
 
     // Post-convolution wet shaping, in signal-flow order: pre-delay -> tone -> bass mono ->
@@ -656,30 +653,6 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
         {
             dryDelayLine.pushSample (ch, d[i]);
             d[i] = dryDelayLine.popSample (ch);
-        }
-    }
-
-    // kernel-swap compensation: a rebake changes the kernel's energy in ~50 ms, but the 0.25 s
-    // follower lags, so the wet would overshoot for a beat (the "blows out for a second" on a
-    // decay/damp/stretch tweak). On a new generation, counter-scale the follower's *current* value
-    // by sqrt(oldEnergy/newEnergy) so the audible wet is continuous across the swap; the RMS
-    // follower then carries on from the matched point. Feed-forward from the published energies,
-    // so it also covers tweaking while silent. No-op when Wet Comp is off (raw level steps as
-    // before) and when energy is unchanged (e.g. Norm IR on -> both kernels ~unit energy).
-    {
-        const int bg = bakeGeneration.load();
-        if (bg != bakeGenSeen)
-        {
-            bakeGenSeen = bg;
-            const float newE = bakedKernelEnergy.load();
-            if (wetCompActive && audioKernelEnergy > 0.0f && newE > 0.0f)
-            {
-                const float makeup = std::sqrt (audioKernelEnergy / newE);
-                const float g = juce::jlimit (0.125f, 8.0f, wetCompSm.getCurrentValue() * makeup);
-                wetCompSm.setCurrentAndTargetValue (g);
-                wetCompTarget = g;   // hold the snapped value if the follower freezes (input quiet)
-            }
-            audioKernelEnergy = newE;
         }
     }
 
@@ -922,18 +895,20 @@ void ConvoAudioProcessor::timerCallback()
         auto lastDisp = lastBaked; lastDisp.startFrac = 0.0f; lastDisp.endFrac = 1.0f;
         const bool displayChanged = (curDisp != lastDisp);
 
-        convolution.rebake (irLibrary.getIR(), irLibrary.getSampleRate(), cur, audioBakeScratch);
+        convolution.rebake (irLibrary.getIR(), irLibrary.getSampleRate(), cur, audioBakeScratch,
+                            wetCompParam->load() > 0.5f);
         bakedIRSampleRate = irLibrary.getSampleRate();
         tailSeconds.store ((float) (audioBakeScratch.getNumSamples() / juce::jmax (1.0, bakedIRSampleRate) + 0.5));
         lastBaked = cur;
 
         if (displayChanged)
             bakedIR = ConvolutionEngine::bake (irLibrary.getIR(), irLibrary.getSampleRate(), curDisp);
-        bakedKernelEnergy.store (kernelEnergy (audioBakeScratch));   // publish before the gen bump (see processBlock)
         bakeGeneration.fetch_add (1);   // every commit -> editor rebuilds the kernel layer (incl. trim-release)
 
         if (targetChanged) filterInput.store (! cur.filterIR);
-        if (toggleChanged) loadFadePending.store (true);
+        // toggles armed the 15 ms load-fade click mask; a rebake the engine routed through
+        // its own equal-loudness crossfade doesn't need (or want) the dip
+        if (toggleChanged && ! convolution.lastLoadTransitioned()) loadFadePending.store (true);
     }
     lastSeenBakeParams = cur;
 }
@@ -944,7 +919,8 @@ bool ConvoAudioProcessor::loadIRFile (const juce::File& file)
         return false;
 
     const auto cur = currentBakeParams();
-    const int  lat = convolution.loadIR (irLibrary.getIR(), irLibrary.getSampleRate(), cur, audioBakeScratch);
+    const int  lat = convolution.loadIR (irLibrary.getIR(), irLibrary.getSampleRate(), cur, audioBakeScratch,
+                                         wetCompParam->load() > 0.5f);
 
     bakedIRSampleRate  = irLibrary.getSampleRate();
     lastBaked          = cur;
@@ -961,7 +937,6 @@ bool ConvoAudioProcessor::loadIRFile (const juce::File& file)
     loadFadePending.store (true);      // arm the click mask before publishing the delay
     dryDelaySamples.store (lat);
     setLatencySamples (lat);
-    bakedKernelEnergy.store (kernelEnergy (audioBakeScratch));   // publish before the gen bump (see processBlock)
     bakeGeneration.fetch_add (1);
 
     apvts.state.setProperty ("irPath", file.getFullPathName(), nullptr);

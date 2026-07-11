@@ -23,6 +23,28 @@
 
 #include <memory>
 
+/** A Slider whose value is hard-limited to a runtime cap: the thumb can't be dragged, wheeled,
+    typed, or key-stepped past the cap in the first place (rather than overshooting and snapping
+    back). JUCE routes every input method through snapValue(), so clamping there catches them all.
+    The cap is refreshed each timer tick; cap < 0 means no cap. Used by Fade In, whose ceiling
+    tracks the IR / decay-cut length. */
+class CappedSlider : public juce::Slider
+{
+public:
+    using juce::Slider::Slider;
+
+    void setValueCap (double newCap) noexcept { valueCap = newCap; }
+
+    double snapValue (double attemptedValue, DragMode dragMode) override
+    {
+        const double v = juce::Slider::snapValue (attemptedValue, dragMode);
+        return valueCap >= 0.0 ? juce::jmin (v, valueCap) : v;
+    }
+
+private:
+    double valueCap = -1.0;
+};
+
 /**
     Convo's editor. The heavy static chrome graphics (panels, meter wells, ticks, rules)
     are rendered once into a cached image on resize; the waveform is rendered into its own
@@ -58,6 +80,10 @@ public:
     void mouseUp   (const juce::MouseEvent&) override;
     void mouseMove (const juce::MouseEvent&) override;
 
+   #if JUCE_DEBUG
+    bool keyPressed (const juce::KeyPress&) override;   // Cmd/Ctrl+Shift+S: supersampled screenshot to the desktop
+   #endif
+
 private:
     void timerCallback() override;
     void openFileChooser();
@@ -74,11 +100,16 @@ private:
     void loadPresetFile (const juce::File& file);
     void promptSavePreset();               // async name prompt -> processor.savePreset
 
+   #if JUCE_DEBUG
+    void saveSupersampledScreenshot(); // dev tool: renders the editor off-screen at high resolution -> PNG on the desktop
+   #endif
+
     void renderBackground();           // static chrome graphics -> backgroundImage
     void drawChromeText (juce::Graphics&);   // static chrome text, drawn live for HiDPI crispness
     void renderWaveImage();            // full-IR waveform -> waveImage (the trim backdrop)
     void renderKernelImage();          // trimmed+shaped kernel -> kernelImage (the selection layer)
     float irGainVisualGain() const;    // IR Gain as a linear factor -> waveform vertical zoom
+    float waveVisualZoom (float layerPeak) const;   // per-layer zoom: height ∝ (peak x IR Gain)^0.5
     void drawMeterFill (juce::Graphics&, juce::Rectangle<int> zone, float level, float peak,
                         const juce::ColourGradient& fill);
     void renderOverlay();              // (re)build the cached EQ curve + bass-mono marker on param/size change
@@ -127,7 +158,8 @@ private:
     // parameter controls (Output has no knob — it's the fader line on the OUT meter)
     juce::Slider drySlider, wetSlider, irGainSlider, toneSlider, inHPSlider, inLPSlider, filterQSlider,
                  preDelaySlider, widthSlider, msBassSlider,
-                 duckSlider, duckRelSlider, gateSlider, fadeInSlider, decaySlider, taperSlider, stretchSlider, dampSlider;
+                 duckSlider, duckRelSlider, gateSlider, decaySlider, taperSlider, stretchSlider, dampSlider;
+    CappedSlider fadeInSlider;   // hard-capped to the IR / decay-cut length so the thumb can't overshoot
     juce::Label  dryLabel, wetLabel, irGainLabel, toneLabel, inHPLabel, inLPLabel, filterQLabel,
                  preDelayLabel, widthLabel, msBassLabel,
                  duckLabel, duckRelLabel, gateLabel, fadeInLabel, decayLabel, taperLabel, stretchLabel, dampLabel;
@@ -188,7 +220,10 @@ private:
                          filterPanel, postPanel, volumePanel, duckPanel, shapePanel, charPanel;
     juce::Rectangle<int> aboutZone;        // small "i" hotspot by the tagline (AGPL legal notice)
     bool updateNoticeSeen = false;         // repaint the "i" once when the async update check lands
-    float fadeMaxShown = -2.0f;            // last-painted fade-in limit marker (arc proportion), -1 = none
+    float fadeMaxShown = -2.0f;            // last-painted fade-in limit tick (arc proportion), -1 = none
+    // true peaks of the (peak-normalized) thumbnail layers — the 8-bit thumbnail cache
+    // holds unit-peak data; these put the real level back in via waveVisualZoom
+    float waveDispPeak = 0.0f, kernelDispPeak = 0.0f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessorEditor)
 };
