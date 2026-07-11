@@ -108,7 +108,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
                                "so tails ring out");
     inHPSlider.setTooltip ("Pre-IR high-pass (low cut), 12 dB/oct, on the signal feeding the IR");
     inLPSlider.setTooltip ("Pre-IR low-pass (high cut), 12 dB/oct, on the signal feeding the IR");
-    fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp is capped at 80% of the IR length");
+    fadeInSlider.setTooltip ("Raised-cosine fade-in baked into the IR; the ramp adapts to the IR and shrinks with the decay cut (leaves a short tail), up to 10 s");
     msBassSlider.setTooltip ("Bass Mono crossover: the wet collapses to mono below this frequency "
                              "and stays stereo above it. 20 Hz = off; turn it up to engage Bass Mono");
     filterIRButton.setTooltip ("Apply the In HP/In LP filter to the IR (baked, shown in the "
@@ -257,6 +257,11 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     setSize (900, 617);   // +7 px vs. before to keep the bottom row clear of the wider header gap
     startTimerHz (30);
+
+   #if JUCE_DEBUG
+    setWantsKeyboardFocus (true);
+    grabKeyboardFocus();
+   #endif
 }
 
 ConvoAudioProcessorEditor::~ConvoAudioProcessorEditor()
@@ -265,6 +270,34 @@ ConvoAudioProcessorEditor::~ConvoAudioProcessorEditor()
     thumbnail->removeChangeListener (this);
     setLookAndFeel (nullptr);
 }
+
+#if JUCE_DEBUG
+bool ConvoAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
+{
+    if (key == juce::KeyPress ('s', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0))
+    {
+        saveSupersampledScreenshot();
+        return true;
+    }
+    return false;
+}
+
+// Renders the editor (and all its children) into an off-screen image at kSupersample x its
+// logical size — resolution-independent since almost everything here is vector/text, not
+// bitmaps — and writes it as a lossless PNG to the desktop. Cmd/Ctrl+Shift+S.
+void ConvoAudioProcessorEditor::saveSupersampledScreenshot()
+{
+    constexpr float kSupersample = 4.0f;
+    auto image = createComponentSnapshot (getLocalBounds(), true, kSupersample);
+
+    auto file = juce::File::getSpecialLocation (juce::File::userDesktopDirectory)
+                    .getNonexistentChildFile ("Convo_screenshot", ".png");
+
+    juce::PNGImageFormat png;
+    if (auto stream = file.createOutputStream())
+        png.writeImageToStream (image, *stream);
+}
+#endif
 
 float ConvoAudioProcessorEditor::uiScale() const
 {
@@ -415,7 +448,7 @@ void ConvoAudioProcessorEditor::renderBackground()
         h.removeFromLeft (92);   // reserve the wordmark column so the tick lands beside it
 
         g.setColour (ConvoColours::mint.withAlpha (0.85f));
-        g.fillRect (h.getX() + 2, headerZone.getCentreY() - 8, 2, 16);
+        g.fillRect (h.getX(), headerZone.getCentreY() - 8, 2, 16);
 
         // engraved header rule: a dark cut + a 1 px catch-light just below, so the divider reads
         // as incised into the chassis (spans the full content width)
@@ -1127,7 +1160,7 @@ void ConvoAudioProcessorEditor::resized()
         h.removeFromLeft (92);                                  // past the "Convo" wordmark
         const auto tag  = h.withTrimmedLeft (12);              // where the tagline starts (matches drawChromeText)
         const int  tagW = juce::roundToInt (juce::GlyphArrangement::getStringWidth (captionFont(), "CONVOLUTION"));
-        aboutZone = juce::Rectangle<int> (tag.getX() + tagW + 9, headerZone.getCentreY() - 8, 16, 16);
+        aboutZone = juce::Rectangle<int> (tag.getX() + tagW + 9, headerZone.getCentreY() - 6, 12, 12);
     }
 
     area.removeFromTop (15);   // 12 px of clear space below the header rule -> matches the graph<->PRE/POST gap
@@ -1370,20 +1403,26 @@ void ConvoAudioProcessorEditor::timerCallback()
     animText (irNormButton,      normLit,    irNormButton.getToggleState()  ? 1.0f : 0.0f,       ConvoColours::label, ConvoColours::mint);
     animText (auditionSrcButton, bakedBlend, auditionSrcButton.getToggleState() ? 1.0f : 0.0f,   ConvoColours::mint,  ConvoColours::copper);
 
-    // fade-in limit: a mint dot on the knob's arc marks the longest usable fade-in (leaves
-    // >= kMinTailMs of IR), and the param is clamped down when the available (decay-cut) length
-    // shrinks past it — so a long fade can't swallow the decay cut and re-bake a near-full IR.
+    // fade-in limit: the longest usable fade-in adapts to the IR and shrinks with the decay cut
+    // (leaves >= kMinTailMs of tail), so a 2 s IR caps the ramp near 1975 ms. Feed it to the slider
+    // as a hard cap so the thumb can't be dragged past it. The snap-back below still handles the
+    // case where the cap drops via *another* param (Decay / trim / stretch / a new IR) while the
+    // Fade In knob isn't being touched — snapValue only fires on direct interaction. The param
+    // range caps the absolute max at 10 s.
     {
         const double maxMs = processor.getMaxFadeInMs();
-        const float  prop  = (maxMs > 0.0) ? (float) fadeInSlider.valueToProportionOfLength (maxMs) : -1.0f;
+        fadeInSlider.setValueCap (maxMs > 0.0 ? maxMs : -1.0);
+        if (maxMs > 0.0 && ! fadeInSlider.isMouseButtonDown() && fadeInSlider.getValue() > maxMs + 1.0)
+            fadeInSlider.setValue (maxMs, juce::sendNotificationSync);
+
+        // a mint tick on the knob's arc marks the cap ("fadeMax" property, arc proportion 0..1)
+        const float prop = (maxMs > 0.0) ? (float) fadeInSlider.valueToProportionOfLength (maxMs) : -1.0f;
         if (std::abs (prop - fadeMaxShown) > 0.001f)
         {
             fadeMaxShown = prop;
             fadeInSlider.getProperties().set ("fadeMax", prop);
             fadeInSlider.repaint();
         }
-        if (maxMs > 0.0 && ! fadeInSlider.isMouseButtonDown() && fadeInSlider.getValue() > maxMs + 1.0)
-            fadeInSlider.setValue (maxMs, juce::sendNotificationSync);
     }
 
     const auto name = processor.getIRLibrary().getDisplayName();

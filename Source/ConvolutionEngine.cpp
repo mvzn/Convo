@@ -303,7 +303,9 @@ double ConvolutionEngine::maxFadeInMs (int rawNumSamples, double irSampleRate, c
     if (rawNumSamples <= 0 || irSampleRate <= 0.0)
         return 0.0;
 
-    // mirror bake()'s length pipeline: trim (with the reverse-coordinate mirror) -> stretch -> decay cut
+    // mirror bake()'s length pipeline: trim (with the reverse-coordinate mirror) -> stretch ->
+    // decay cut. The fade-in max is that (decay-cut) length minus kMinTailMs, so the ramp adapts
+    // to the IR AND shrinks with the decay cut, always leaving a short tail.
     float s = juce::jlimit (0.0f, 1.0f, bp.startFrac);
     float e = juce::jlimit (0.0f, 1.0f, bp.endFrac);
     if (bp.reverse) { const float ms = 1.0f - e, me = 1.0f - s; s = ms; e = me; }

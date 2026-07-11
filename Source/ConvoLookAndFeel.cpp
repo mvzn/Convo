@@ -131,19 +131,22 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
         g.strokePath (value, PathStrokeType (lineW, PathStrokeType::curved, PathStrokeType::rounded));
     }
 
-    // --- fade-in limit marker: a mint dot on the arc at the longest usable fade-in (the "fadeMax"
-    //     property, an arc proportion 0..1). Only the fade-in knob sets it; -1 elsewhere -> skipped. ---
+    // --- fade-in limit marker: a slim radial tick across the arc at the longest usable fade-in
+    //     (the "fadeMax" property, an arc proportion 0..1). Only the fade-in knob sets it;
+    //     -1 elsewhere -> skipped. ---
     const float fadeMax = (float) slider.getProperties().getWithDefault ("fadeMax", -1.0);
     if (fadeMax >= 0.0f && fadeMax <= 1.0f)
     {
         const float ma = rotaryStartAngle + fadeMax * (rotaryEndAngle - rotaryStartAngle);
         const Point<float> md (std::cos (ma - MathConstants<float>::halfPi), std::sin (ma - MathConstants<float>::halfPi));
-        const Point<float> mp = centre + md * arcR;
-        const float mr = jmax (2.0f, lineW * 0.6f);
-        g.setColour (Colours::black.withAlpha (0.5f));            // thin dark rim so it reads on the arc
-        g.fillEllipse (Rectangle<float> (mr * 2.0f + 1.5f, mr * 2.0f + 1.5f).withCentre (mp));
+        const float reach = lineW * 1.1f;             // how far the tick pokes past the arc, each side
+        Path tick;
+        tick.startNewSubPath (centre + md * (arcR - reach));
+        tick.lineTo          (centre + md * (arcR + reach));
+        g.setColour (Colours::black.withAlpha (0.55f));                   // dark seat so it reads on the lit arc
+        g.strokePath (tick, PathStrokeType (lineW * 0.85f, PathStrokeType::curved, PathStrokeType::rounded));
         g.setColour (ConvoColours::mint);
-        g.fillEllipse (Rectangle<float> (mr * 2.0f, mr * 2.0f).withCentre (mp));
+        g.strokePath (tick, PathStrokeType (lineW * 0.35f, PathStrokeType::curved, PathStrokeType::rounded));
     }
 
     // --- live gain-reduction probe (Duck knob): a thin mint arc in the gap just inside the
@@ -166,8 +169,8 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
     // --- LED indicator dot on the rotating cap, near its outer edge (glows like the arc) ---
     const Point<float> dir (std::cos (angle - MathConstants<float>::halfPi),
                             std::sin (angle - MathConstants<float>::halfPi));
-    const Point<float> led = centre + dir * (capR * 0.8f);
-    const float ledR = jmax (2.0f, lineW * 0.55f);
+    const Point<float> led = centre + dir * (capR * 0.75f);
+    const float ledR = jmax (2.0f, lineW * 0.50f);
     g.setColour (ConvoColours::mint.withAlpha (0.22f));
     g.fillEllipse (Rectangle<float> (ledR * 3.2f, ledR * 3.2f).withCentre (led));
     g.setColour (ConvoColours::mint.withAlpha (0.45f));

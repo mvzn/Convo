@@ -143,9 +143,10 @@ public:
                                           const IRBakeParams& bp);
 
     /** The longest usable fade-in (ms) for the given raw IR + bake params: the decay-cut
-        length (after trim + stretch) minus kMinTailMs, so a fade-in can never swallow the
-        cut. Drives the fade-in knob's max marker and the editor's fade-in clamp; bake()
-        applies the same cap internally. Returns 0 for an empty/invalid IR. */
+        length (after trim + stretch) minus kMinTailMs, so the ramp adapts to the IR, shrinks
+        with the decay cut, and always leaves a short tail. Drives the editor's fade-in clamp
+        (the param range caps the absolute max at 10 s); bake() applies its own cap internally.
+        Returns 0 for an empty/invalid IR. */
     static double maxFadeInMs (int rawNumSamples, double irSampleRate, const IRBakeParams& bp);
 
     static constexpr float kMinTailMs = 25.0f;   // min IR kept after a fade-in (never fully swallowed)
