@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 #
-# Installs Convo.vst3 for the current user.
+# Installs Convo.vst3 (licensed under the AGPLv3 — see LICENSE in this archive).
 #
-# Usage:   ./install.sh            install to ~/.vst3 (per-user, no root)
+# Usage:   ./install.sh            install to ~/.vst3 (per-user default, no root)
 #          ./install.sh --system   install to /usr/lib/vst3 (all users, needs sudo)
+#          ./install.sh <dir>      install to a custom VST3 folder
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
