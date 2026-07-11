@@ -112,14 +112,29 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
     g.fillEllipse (centre.x - capR, centre.y - capR, capR * 2.0f, capR * 2.0f);
 
     // --- unfilled value-arc track + filled value arc (the outer "LED dial", kept) ---
+    // fade-in limit ("fadeMax" property, arc proportion 0..1): only the fade-in knob sets
+    // it; -1 elsewhere. Read here so the value arc can tuck under the tick drawn below.
+    const float fadeMax = (float) slider.getProperties().getWithDefault ("fadeMax", -1.0);
+
     Path track;
     track.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, rotaryStartAngle, rotaryEndAngle, true);
     g.setColour (ConvoColours::arcTrack);
     g.strokePath (track, PathStrokeType (lineW, PathStrokeType::curved, PathStrokeType::rounded));
     if (slider.isEnabled() && sliderPos > 0.0f)
     {
+        // the rounded stroke cap protrudes lineW/2 past the end angle, so at the fade-in
+        // limit the arc would poke out beyond the tick: back the end off by the cap radius
+        // (in radians) whenever it would cross it, so the cap lands under the tick instead
+        float valueEnd = angle;
+        if (fadeMax >= 0.0f && fadeMax <= 1.0f)
+        {
+            const float ma      = rotaryStartAngle + fadeMax * (rotaryEndAngle - rotaryStartAngle);
+            const float capBack = (lineW * 0.5f) / arcR;
+            if (valueEnd > ma - capBack)
+                valueEnd = jmax (rotaryStartAngle, ma - capBack);
+        }
         Path value;
-        value.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, rotaryStartAngle, angle, true);
+        value.addCentredArc (centre.x, centre.y, arcR, arcR, 0.0f, rotaryStartAngle, valueEnd, true);
         // Gate knob: the "gateAct" property (>= 0) tints the arc grey when idle -> mint when the gate
         // is actively cutting. Every other knob keeps the accent->mint gradient.
         const float gateAct = (float) slider.getProperties().getWithDefault ("gateAct", -1.0);
@@ -131,10 +146,8 @@ void ConvoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int wi
         g.strokePath (value, PathStrokeType (lineW, PathStrokeType::curved, PathStrokeType::rounded));
     }
 
-    // --- fade-in limit marker: a slim radial tick across the arc at the longest usable fade-in
-    //     (the "fadeMax" property, an arc proportion 0..1). Only the fade-in knob sets it;
-    //     -1 elsewhere -> skipped. ---
-    const float fadeMax = (float) slider.getProperties().getWithDefault ("fadeMax", -1.0);
+    // --- fade-in limit marker: a slim radial tick across the arc at the longest usable
+    //     fade-in (skipped on every other knob) ---
     if (fadeMax >= 0.0f && fadeMax <= 1.0f)
     {
         const float ma = rotaryStartAngle + fadeMax * (rotaryEndAngle - rotaryStartAngle);

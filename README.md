@@ -3,10 +3,6 @@
 A simple **convolution audio effect**. Drop an impulse response, hear your
 signal convolved with it. Free and open source (AGPLv3).
 
-Convo is a focused convolver: no MIDI, no ADSR, no transposition. Just a clean
-convolution/IR core with musical shaping controls (trim, reverse, decay, damping,
-tone, width, ducking, gate, and more).
-
 ## Controls
 
 | Control | Range | Default | What it does |

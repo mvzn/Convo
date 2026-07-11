@@ -174,12 +174,6 @@ private:
     float  duckEnv = 0.0f;
     float  gateGain = 1.0f;   // gated-reverb gate gain on the wet (audio-thread, smoothed open/close)
     float  wetCompTarget = 1.0f;   // wet-comp ratio held across blocks (frozen while input is quiet)
-    // wet-comp kernel-swap compensation (audio-thread edge detect): a rebake changes the kernel's
-    // energy in ~50 ms while the 0.25 s follower lags, so the wet would overshoot for a beat. On a
-    // new generation, counter-scale the follower by sqrt(oldEnergy/newEnergy) so the swap is
-    // loudness-neutral (feed-forward, no RMS needed — works even when the input is silent).
-    int    bakeGenSeen      = 0;
-    float  audioKernelEnergy = 0.0f;
     bool   prevFilterInput = true; // audio-thread edge detect: reset input filters when re-engaged
     // neutral-stage skip edge detect: reset the filter/delay on re-engage so the resumed block
     // starts clean (each stage is skipped while its control sits at a no-op value)
@@ -189,7 +183,6 @@ private:
     std::atomic<int>   dryDelaySamples { 0 };        // engine latency published on load (message thread)
     std::atomic<bool>  loadFadePending { false };    // trigger the click-masking output fade
     std::atomic<int>   bakeGeneration  { 0 };
-    std::atomic<float> bakedKernelEnergy { 0.0f };   // max-channel L2 energy of the live baked kernel (per generation)
     std::atomic<float> inputLevel  { 0.0f };
     std::atomic<float> outputLevel { 0.0f };
     std::atomic<float> duckGR      { 0.0f };         // live ducking gain reduction (0..1), published for the editor probe

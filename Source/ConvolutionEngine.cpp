@@ -26,8 +26,8 @@ void ConvolutionEngine::prepare (const juce::dsp::ProcessSpec& spec)
     prepSampleRate = spec.sampleRate;
     maxBlockSize   = (int) spec.maximumBlockSize;
 
-    shortEngine.prepare (spec);
-    longEngine.prepare (spec);
+    for (int i = 0; i < 4; ++i)
+        engineAt (i).prepare (spec);
 
     // prepare() rebuilds each engine's kernel synchronously from its factory copy,
     // so any in-flight transition can be completed right here (no audio is running).
@@ -38,6 +38,8 @@ void ConvolutionEngine::prepare (const juce::dsp::ProcessSpec& spec)
     active.store (targetEngine);
     loaded.store (haveKernel);
     pendingTarget.store (-1);
+    pendingGain.store (1.0f);
+    swapCompScale.store (1.0f);    // the processor resets its Wet Comp state alongside
     transitionGen.fetch_add (1);   // audio thread drops any stale transition phase
 
     latencySamples = computeLatency (targetEngine);
@@ -45,8 +47,8 @@ void ConvolutionEngine::prepare (const juce::dsp::ProcessSpec& spec)
 
 void ConvolutionEngine::reset()
 {
-    shortEngine.reset();
-    longEngine.reset();
+    for (int i = 0; i < 4; ++i)
+        engineAt (i).reset();
 }
 
 int ConvolutionEngine::computeLatency (int /*engineIndex*/) const noexcept
@@ -326,8 +328,28 @@ double ConvolutionEngine::maxFadeInMs (int rawNumSamples, double irSampleRate, c
     return (double) maxFadeSamps / irSampleRate * 1000.0;
 }
 
-void ConvolutionEngine::loadInto (int engineIndex, const juce::AudioBuffer<float>& baked, double irSampleRate)
+// max-channel L2 (amplitude) of a baked kernel — the same loudness measure auto-level uses,
+// so the ratio of two kernels' L2s is the convolution-loudness ratio between them. Drives
+// the swap-continuity makeup (see the class comment).
+static float kernelL2 (const juce::AudioBuffer<float>& k) noexcept
 {
+    double maxE = 0.0;
+    for (int ch = 0; ch < k.getNumChannels(); ++ch)
+    {
+        const float* h = k.getReadPointer (ch);
+        double e = 0.0;
+        for (int i = 0; i < k.getNumSamples(); ++i)
+            e += (double) h[i] * (double) h[i];
+        maxE = juce::jmax (maxE, e);
+    }
+    return (float) std::sqrt (maxE);
+}
+
+void ConvolutionEngine::loadInto (int engineIndex, const juce::AudioBuffer<float>& baked,
+                                  double irSampleRate, float bakedL2)
+{
+    slotL2[engineIndex] = bakedL2;
+
     juce::AudioBuffer<float> copy;
     copy.makeCopyOf (baked);
     engineAt (engineIndex).loadImpulseResponse (std::move (copy),
@@ -338,40 +360,58 @@ void ConvolutionEngine::loadInto (int engineIndex, const juce::AudioBuffer<float
                                                 juce::dsp::Convolution::Normalise::no);
 }
 
-int ConvolutionEngine::loadIR (const juce::AudioBuffer<float>& raw, double irSampleRate,
-                               const IRBakeParams& bp, juce::AudioBuffer<float>& outBaked)
+// loudness-continuity makeup: what the incoming kernel's output must be scaled by to sit
+// at the audible kernel's loudness. Deliberately UNclamped to the Wet Comp ±18 dB range —
+// continuity comes first; the comp follower re-clamps over its own ramp — but bounded to
+// ±36 dB against pathological kernels.
+static float swapMakeup (float audibleL2, float newL2) noexcept
 {
-    const double seconds   = (irSampleRate > 0.0) ? (double) raw.getNumSamples() / irSampleRate : 0.0;
-    const int    newTarget = seconds >= kThresholdSeconds ? 1 : 0;
+    if (audibleL2 < 1.0e-6f || newL2 < 1.0e-6f)
+        return 1.0f;
+    return juce::jlimit (1.0f / 64.0f, 64.0f, audibleL2 / newL2);
+}
+
+int ConvolutionEngine::loadIR (const juce::AudioBuffer<float>& raw, double irSampleRate,
+                               const IRBakeParams& bp, juce::AudioBuffer<float>& outBaked,
+                               bool levelMatch)
+{
+    const double seconds  = (irSampleRate > 0.0) ? (double) raw.getNumSamples() / irSampleRate : 0.0;
+    const int    newClass = seconds >= kThresholdSeconds ? 1 : 0;
 
     const auto baked = bake (raw, irSampleRate, bp);
     outBaked.makeCopyOf (baked);
     if (baked.getNumSamples() == 0)
         return latencySamples;     // bad bake: keep the current state untouched
 
-    loadInto (newTarget, baked, irSampleRate);
+    // Every new file warm-up-transitions in from a NON-audible engine: the sibling slot
+    // when the audible engine is already in the right class, slot A when entering a class.
+    // (`active` can trail `targetEngine` while a previous swap is in flight — keying off
+    // the audible engine keeps ping-pong correct either way.)
+    const int  activeNow = active.load();
+    const bool audible   = loaded.load();
+    const int  newIdx    = (audible && (activeNow >> 1) == newClass) ? (activeNow ^ 1)
+                                                                     : newClass * 2;
 
-    // Reloading the audible engine is seamless (JUCE crossfades kernels internally).
-    // A different engine — or one that has never held a kernel and still contains
-    // JUCE's pass-through unit impulse — must be warmed up before it goes live.
-    const bool needsTransition = (newTarget != targetEngine) || ! engineUsed[newTarget];
-    engineUsed[newTarget] = true;
-    haveKernel            = true;
-    targetEngine          = newTarget;
+    const float audL2 = slotL2[activeNow];
+    const float newL2 = kernelL2 (baked);
+    loadInto (newIdx, baked, irSampleRate, newL2);
 
-    if (needsTransition)
-    {
-        pendingSize.store (expectedKernelSize (baked.getNumSamples(), irSampleRate, prepSampleRate));
-        pendingTarget.store (newTarget);
-        transitionGen.fetch_add (1);
-    }
+    haveKernel             = true;
+    targetEngine           = newIdx;
+    lastLoadUsedTransition = true;
+
+    pendingSize.store (expectedKernelSize (baked.getNumSamples(), irSampleRate, prepSampleRate));
+    pendingGain.store ((levelMatch && audible) ? swapMakeup (audL2, newL2) : 1.0f);
+    pendingTarget.store (newIdx);
+    transitionGen.fetch_add (1);
 
     latencySamples = computeLatency (targetEngine);
     return latencySamples;
 }
 
 void ConvolutionEngine::rebake (const juce::AudioBuffer<float>& raw, double irSampleRate,
-                                const IRBakeParams& bp, juce::AudioBuffer<float>& outBaked)
+                                const IRBakeParams& bp, juce::AudioBuffer<float>& outBaked,
+                                bool levelMatch)
 {
     if (raw.getNumSamples() == 0 || ! haveKernel)
         return;
@@ -381,13 +421,53 @@ void ConvolutionEngine::rebake (const juce::AudioBuffer<float>& raw, double irSa
         return;
     outBaked.makeCopyOf (baked);
 
-    loadInto (targetEngine, baked, irSampleRate);
+    const int   activeNow = active.load();
+    const bool  audible   = loaded.load();
+    const float audL2     = slotL2[activeNow];
+    const float newL2     = kernelL2 (baked);
 
-    // If a warm-up is still in flight the expected size has changed; re-arm it.
-    // Harmless when the target is already live (the audio thread re-evaluates to
-    // idle and JUCE's internal crossfade handles the kernel swap).
-    pendingSize.store (expectedKernelSize (baked.getNumSamples(), irSampleRate, prepSampleRate));
-    transitionGen.fetch_add (1);
+    // A warm-up still in flight (or the very first load still warming): replace the
+    // warming slot's kernel and re-arm — the expected size and makeup have changed.
+    // (Racing the flip by a block loads into the just-audible engine instead: that
+    // falls back to JUCE's internal in-place crossfade, a bounded one-step blip.)
+    if (! audible || activeNow != targetEngine)
+    {
+        loadInto (targetEngine, baked, irSampleRate, newL2);
+        pendingSize.store (expectedKernelSize (baked.getNumSamples(), irSampleRate, prepSampleRate));
+        pendingGain.store ((levelMatch && audible) ? swapMakeup (audL2, newL2) : 1.0f);
+        pendingTarget.store (targetEngine);
+        transitionGen.fetch_add (1);
+        lastLoadUsedTransition = true;
+        return;
+    }
+
+    const float makeup  = levelMatch ? swapMakeup (audL2, newL2) : 1.0f;
+    const bool  bigStep = makeup > 1.122f || makeup < 0.891f;   // ~±1 dB loudness step
+
+    if (bigStep)
+    {
+        // Level-stepping rebake (e.g. the Norm IR toggle): warm the sibling slot up and
+        // crossfade over at matched loudness, so the swap is inaudible no matter how long
+        // JUCE's background load takes. The makeup hands off to Wet Comp at the flip.
+        const int newIdx = activeNow ^ 1;
+        loadInto (newIdx, baked, irSampleRate, newL2);
+        targetEngine           = newIdx;
+        lastLoadUsedTransition = true;
+
+        pendingSize.store (expectedKernelSize (baked.getNumSamples(), irSampleRate, prepSampleRate));
+        pendingGain.store (makeup);
+        pendingTarget.store (newIdx);
+        transitionGen.fetch_add (1);
+        return;
+    }
+
+    // Small tweak (a knob-drag commit): reload the audible engine in place — JUCE's
+    // internal crossfade keeps it instant-feeling — and publish the sub-dB makeup
+    // immediately. That's mistimed by the async install, but inaudible at this size.
+    loadInto (targetEngine, baked, irSampleRate, newL2);
+    lastLoadUsedTransition = false;
+    if (! juce::approximatelyEqual (makeup, 1.0f))
+        publishSwapScale (makeup);
 }
 
 void ConvolutionEngine::process (juce::dsp::AudioBlock<float> block)
@@ -397,6 +477,7 @@ void ConvolutionEngine::process (juce::dsp::AudioBlock<float> block)
     {
         lastGenSeen = gen;
         transTarget = pendingTarget.load();
+        transGain   = pendingGain.load();
         // A transition is only meaningful towards an engine that isn't already the
         // live one; a re-arm aimed at the audible engine is a seamless kernel swap.
         phase = (transTarget >= 0 && (transTarget != active.load() || ! loaded.load()))
@@ -454,6 +535,13 @@ void ConvolutionEngine::process (juce::dsp::AudioBlock<float> block)
         target.process (sctx);
     }
 
+    // loudness-continuity makeup on the incoming engine: the output crossfade below then
+    // morphs between two equal-loudness signals, so the swap itself is level-silent. The
+    // gain covers the whole flip block; the processor takes it over (via the published
+    // comp scale) from the next block on.
+    if (! juce::approximatelyEqual (transGain, 1.0f))
+        scratchBlock.multiplyBy (transGain);
+
     switch (phase)
     {
         case Phase::waiting:
@@ -495,6 +583,10 @@ void ConvolutionEngine::process (juce::dsp::AudioBlock<float> block)
             {
                 active.store (transTarget);
                 loaded.store (true);
+                // hand the makeup off to the processor's Wet Comp: consumed before the
+                // NEXT block's process(), exactly when this engine stops applying it
+                if (! juce::approximatelyEqual (transGain, 1.0f))
+                    publishSwapScale (transGain);
                 phase = Phase::idle;
             }
             break;
