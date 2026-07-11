@@ -559,6 +559,7 @@ void ConvoAudioProcessorEditor::drawChromeText (juce::Graphics& g)
 // painting (everything heavy is pre-rendered; this just blits + dynamics)
 // ---------------------------------------------------------------------------
 
+// level/peak arrive as fill proportions on the -60..0 dBFS scale (mapped in timerCallback)
 void ConvoAudioProcessorEditor::drawMeterFill (juce::Graphics& g, juce::Rectangle<int> zone,
                                                float level, float peak, const juce::ColourGradient& fillGrad)
 {
@@ -585,7 +586,7 @@ void ConvoAudioProcessorEditor::drawMeterFill (juce::Graphics& g, juce::Rectangl
     if (p > 0.001f)
     {
         const float y = well.getBottom() - well.getHeight() * p;
-        g.setColour (p > 0.95f ? ConvoColours::clip : ConvoColours::mint.brighter (0.3f));
+        g.setColour (p > 0.983f ? ConvoColours::clip : ConvoColours::mint.brighter (0.3f));   // red above ~-1 dBFS
         g.fillRect (well.getX(), y - 1.0f, well.getWidth(), 2.0f);
     }
 }
@@ -1360,8 +1361,14 @@ void ConvoAudioProcessorEditor::timerCallback()
         repaint (aboutZone.expanded (2));
     }
 
-    inMeter  = processor.getInputLevel();
-    outMeter = processor.getOutputLevel();
+    // meters show a -60..0 dBFS scale (like DAW meters): the processor's linear peaks are mapped
+    // to fill proportion here, so the bar/peak decay below runs in fill (dB) space
+    auto dbFill = [] (float lin)
+    {
+        return juce::jmap (juce::Decibels::gainToDecibels (lin, -60.0f), -60.0f, 0.0f, 0.0f, 1.0f);
+    };
+    inMeter  = dbFill (processor.getInputLevel());
+    outMeter = dbFill (processor.getOutputLevel());
     inPeak   = juce::jmax (inMeter,  inPeak  * 0.96f);   // peak line falls slower than the bar
     outPeak  = juce::jmax (outMeter, outPeak * 0.96f);
     duckGR   = processor.getDuckGainReduction();
