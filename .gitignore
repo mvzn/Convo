@@ -32,6 +32,3 @@ JuceLibraryCode/
 
 # packaged installers
 dist/
-
-# CI workflows — kept local, not published
-.github/workflows/

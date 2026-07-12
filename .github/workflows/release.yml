@@ -1,0 +1,143 @@
+name: Release
+
+# Tag a version to cut a release:  git tag v1.0.0 && git push origin v1.0.0
+# Builds all three platforms, validates, packages the installers, and publishes a
+# DRAFT GitHub Release with them attached. Review the draft, then hit Publish — the
+# in-plugin update check only sees published (non-draft) releases, so users aren't
+# notified until you publish.
+on:
+  push:
+    tags:
+      - 'v*'
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    env:
+      _CL_: -Z7   # MSVC embedded debug info (see build.yml)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        shell: bash
+        run: |
+          V=$(grep -m1 -oE 'project\(Convo VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          echo "CONVO_VERSION=$V" >> "$GITHUB_ENV"
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$TAG" != "$V" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match CMake project version $V"
+            exit 1
+          fi
+          echo "Releasing Convo $V"
+
+      - name: Install Linux deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libfreetype-dev libfontconfig1-dev \
+            libgtk-3-dev libxinerama-dev libxrandr-dev libxcursor-dev \
+            libxcomposite-dev mesa-common-dev ninja-build xvfb libcurl4-openssl-dev
+
+      - if: runner.os != 'Linux'
+        uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: deps-${{ runner.os }}-
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DCMAKE_POLICY_DEFAULT_CMP0141=NEW \
+            -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release --parallel
+
+      - name: Validate (pluginval)
+        shell: bash
+        run: |
+          set -e
+          BASE="https://github.com/Tracktion/pluginval/releases/latest/download"
+          VST3="build/Convo_artefacts/Release/VST3/Convo.vst3"
+          case "$RUNNER_OS" in
+            Linux)
+              curl -sSL -o pv.zip "$BASE/pluginval_Linux.zip"; unzip -o -q pv.zip; chmod +x pluginval
+              xvfb-run -a ./pluginval --strictness-level 10 --validate "$VST3" ;;
+            Windows)
+              curl -sSL -o pv.zip "$BASE/pluginval_Windows.zip"; 7z x -y pv.zip > /dev/null
+              ./pluginval.exe --strictness-level 10 --validate "$VST3" ;;
+            macOS)
+              curl -sSL -o pv.zip "$BASE/pluginval_macOS.zip"; unzip -o -q pv.zip
+              PV="pluginval.app/Contents/MacOS/pluginval"
+              "$PV" --strictness-level 10 --validate "$VST3"
+              "$PV" --strictness-level 10 --validate "build/Convo_artefacts/Release/AU/Convo.component" ;;
+          esac
+
+      - name: Package installer (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: packaging/linux/build-tarball.sh "$CONVO_VERSION"
+
+      - name: Package installer (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          choco install innosetup -y --no-progress
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "//DAppVersion=$CONVO_VERSION" packaging/windows/Convo.iss
+
+      - name: Package installer (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        # Signing/notarization kick in automatically once these repo secrets are set;
+        # empty = unsigned build (fine for testing, blocked by Gatekeeper for end users).
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          PKG_SIGN_IDENTITY: ${{ secrets.MACOS_PKG_SIGN_IDENTITY }}
+        run: packaging/macos/build-pkg.sh "$CONVO_VERSION"
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ runner.os }}
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the GitHub Release
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish draft GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*
+          draft: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
