@@ -918,6 +918,10 @@ bool ConvoAudioProcessor::loadIRFile (const juce::File& file)
     if (! irLibrary.loadFile (file))
         return false;
 
+    // detected once per file: the trim handles' snap-to-onset target (raw-space fraction,
+    // invariant under every bake knob, so the rebake path never needs to recompute it)
+    onsetEndFrac.store (ConvolutionEngine::detectOnsetEndFrac (irLibrary.getIR(), irLibrary.getSampleRate()));
+
     const auto cur = currentBakeParams();
     const int  lat = convolution.loadIR (irLibrary.getIR(), irLibrary.getSampleRate(), cur, audioBakeScratch,
                                          wetCompParam->load() > 0.5f);

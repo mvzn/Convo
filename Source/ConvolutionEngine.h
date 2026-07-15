@@ -180,6 +180,13 @@ public:
         Returns 0 for an empty/invalid IR. */
     static double maxFadeInMs (int rawNumSamples, double irSampleRate, const IRBakeParams& bp);
 
+    /** End of the direct-path spike at the head of a recorded IR, as a fraction (0..1)
+        of the raw length — the natural snap target for the Start trim when the user wants
+        a tail/reflections-only wet (no dry copy in the convolution). Returns -1 when no
+        distinct head spike exists (dense material, swells, silence, click-only IRs), in
+        which case snapping is disabled. Pure function of its arguments; message thread. */
+    static float detectOnsetEndFrac (const juce::AudioBuffer<float>& raw, double sampleRate);
+
     static constexpr float kMinTailMs = 25.0f;   // min IR kept after a fade-in (never fully swallowed)
 
     /** Test canary only: the latency JUCE reports for the long (non-uniform) engines.

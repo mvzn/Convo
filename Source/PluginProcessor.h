@@ -90,6 +90,7 @@ public:
 
     // Baked (processed) IR for the editor's thumbnail. All accessed on the message thread.
     int getBakeGeneration() const noexcept { return bakeGeneration.load(); }
+    float getOnsetEndFrac() const noexcept { return onsetEndFrac.load(); }   // raw-space fraction; -1 = no distinct spike
     const juce::AudioBuffer<float>& getBakedIR() const noexcept { return bakedIR; }
     double getBakedIRSampleRate() const noexcept { return bakedIRSampleRate; }
     const juce::AudioBuffer<float>& getKernelIR() const noexcept { return audioBakeScratch; }  // trimmed+shaped kernel (the selection layer)
@@ -183,6 +184,7 @@ private:
     std::atomic<int>   dryDelaySamples { 0 };        // engine latency published on load (message thread)
     std::atomic<bool>  loadFadePending { false };    // trigger the click-masking output fade
     std::atomic<int>   bakeGeneration  { 0 };
+    std::atomic<float> onsetEndFrac { -1.0f };       // end of the IR's direct-path spike (raw fraction); -1 = none
     std::atomic<float> inputLevel  { 0.0f };
     std::atomic<float> outputLevel { 0.0f };
     std::atomic<float> duckGR      { 0.0f };         // live ducking gain reduction (0..1), published for the editor probe

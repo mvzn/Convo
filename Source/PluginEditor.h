@@ -126,6 +126,12 @@ private:
     float liveTrimStart() const;                // Start frac: the live drag value while dragging, else the param
     float liveTrimEnd()   const;                // End frac: same
 
+    // Snap-to-onset: the detected end of the IR's direct-path spike is a magnet/jump target
+    // for the trim handle that cuts the head, so a tail-only wet (no dry copy) is one gesture.
+    bool displayReversed() const;               // Reverse param: the display shows the mirrored IR
+    float onsetDisplayFrac() const;             // onset in display coords (mirrored under Reverse); -1 = none
+    TrimHandle onsetHandle() const;             // the handle that cuts the head: End under Reverse, else Start
+
     ConvoAudioProcessor& processor;
 
     ConvoLookAndFeel lookAndFeel;
@@ -196,9 +202,11 @@ private:
     TrimHandle activeHandle = TrimHandle::none;   // handle currently being dragged
     TrimHandle hoverHandle  = TrimHandle::none;   // handle under the cursor (affordance)
     float dragStartFrac = 0.0f, dragEndFrac = 1.0f;   // live trim while dragging — committed to the params on mouse-up
+    float onsetFrac = -1.0f;                      // raw-space onset-end fraction from the processor; -1 = none
     float trimStartSeen = -1.0e9f, trimEndSeen = -1.0e9f;
     float irGainSeen = -1.0e9f;        // last-seen IR Gain (visual factor) -> rescale the waveform
     static constexpr int kTrimHandleHitPx = 8;    // half-width of a handle's grab zone
+    static constexpr int kTrimSnapPx      = 6;    // half-width of the onset marker's snap magnet
 
     // cached overlay: rebuilt only when its params/size change, then just stroked in paint
     juce::Path eqCurvePath;

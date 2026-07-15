@@ -328,6 +328,74 @@ double ConvolutionEngine::maxFadeInMs (int rawNumSamples, double irSampleRate, c
     return (double) maxFadeSamps / irSampleRate * 1000.0;
 }
 
+float ConvolutionEngine::detectOnsetEndFrac (const juce::AudioBuffer<float>& raw, double sampleRate)
+{
+    const int numCh = raw.getNumChannels();
+    const int len   = raw.getNumSamples();
+    if (numCh == 0 || len < 64 || sampleRate <= 0.0)
+        return -1.0f;
+
+    // cross-channel rectified peak and its position (the direct-path spike candidate)
+    auto rectAt = [&] (int i) noexcept
+    {
+        float a = 0.0f;
+        for (int ch = 0; ch < numCh; ++ch)
+            a = juce::jmax (a, std::abs (raw.getSample (ch, i)));
+        return a;
+    };
+
+    int   p = 0;
+    float A = 0.0f;
+    for (int i = 0; i < len; ++i)
+    {
+        const float a = rectAt (i);
+        if (a > A) { A = a; p = i; }
+    }
+    if (A < 1.0e-6f)
+        return -1.0f;   // silence
+
+    // a direct-path spike lives at the head; a peak deep into the file means the IR is a
+    // swell / song-as-IR with no direct arrival to remove
+    const int headLimit = juce::jmin (len - 1, (int) std::round (0.5 * sampleRate));
+    if (p > headLimit)
+        return -1.0f;
+
+    // walk forward from the spike until a short-window max envelope drops 30 dB below it;
+    // a real direct arrival separates from the tail within a few ms, dense IRs never do
+    const int   envWin  = juce::jmax (1, (int) std::round (0.0005 * sampleRate));   // 0.5 ms
+    const int   scanEnd = juce::jmin (len, p + 1 + (int) std::round (0.010 * sampleRate));
+    const float dropAt  = A * juce::Decibels::decibelsToGain (-30.0f);
+
+    int e = -1;
+    for (int i = p + 1; i < scanEnd; ++i)
+    {
+        float env = 0.0f;
+        const int wEnd = juce::jmin (len, i + envWin);
+        for (int j = i; j < wEnd; ++j)
+            env = juce::jmax (env, rectAt (j));
+        if (env < dropAt) { e = i; break; }
+    }
+    if (e < 0)
+        return -1.0f;   // spike doesn't separate from the tail within 10 ms
+
+    // guard band: irStart/irEnd snap to a 0.0001 grid (and the fraction round-trips through
+    // float), which can move the cut earlier than e — back into the spike. One grid step of
+    // forward bias keeps any quantised cut at or past the detected end.
+    e = juce::jmin (len, e + (int) std::ceil (1.0e-4 * (double) len) + 1);
+
+    // require a usable tail after the cut: enough length, and not buried below -80 dB
+    // relative to the spike (that IR *is* just a click — nothing left to convolve with)
+    if (e >= (int) (0.9f * (float) len))
+        return -1.0f;
+    float tailPeak = 0.0f;
+    for (int i = e; i < len; ++i)
+        tailPeak = juce::jmax (tailPeak, rectAt (i));
+    if (tailPeak < A * 1.0e-4f)
+        return -1.0f;
+
+    return (float) e / (float) len;
+}
+
 // max-channel L2 (amplitude) of a baked kernel — the same loudness measure auto-level uses,
 // so the ratio of two kernels' L2s is the convolution-loudness ratio between them. Drives
 // the swap-continuity makeup (see the class comment).

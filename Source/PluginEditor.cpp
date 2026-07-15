@@ -784,6 +784,25 @@ float ConvoAudioProcessorEditor::liveTrimEnd() const
                                             : processor.getAPVTS().getRawParameterValue ("irEnd")->load();
 }
 
+bool ConvoAudioProcessorEditor::displayReversed() const
+{
+    return processor.getAPVTS().getRawParameterValue ("reverse")->load() > 0.5f;
+}
+
+float ConvoAudioProcessorEditor::onsetDisplayFrac() const
+{
+    if (onsetFrac < 0.0f)
+        return -1.0f;
+    return displayReversed() ? 1.0f - onsetFrac : onsetFrac;
+}
+
+ConvoAudioProcessorEditor::TrimHandle ConvoAudioProcessorEditor::onsetHandle() const
+{
+    // the spike sits at the display's right edge when reversed, so the End handle is the
+    // one whose cut excludes it (bake mirrors it back to a raw head cut)
+    return displayReversed() ? TrimHandle::end : TrimHandle::start;
+}
+
 ConvoAudioProcessorEditor::TrimHandle ConvoAudioProcessorEditor::trimHandleAt (juce::Point<int> p) const
 {
     // only grab while a waveform is shown and the cursor is within the wave zone band
@@ -831,6 +850,20 @@ void ConvoAudioProcessorEditor::drawTrimHandles (juce::Graphics& g)
         g.setColour (col);
         g.fillPath (p);
     };
+
+    // onset marker: where the IR's direct-path spike ends — the snap target for a
+    // tail-only wet. Drawn under the handles; warm copper so it can't be read as a handle.
+    if (const float od = onsetDisplayFrac(); od >= 0.0f)
+    {
+        const float ox  = trimFracToX (od);
+        const bool  hot = (activeHandle == onsetHandle());   // brighten while that handle drags
+        g.setColour (ConvoColours::copper.withAlpha (hot ? 0.9f : 0.55f));
+        const float dash[] = { 3.0f, 3.0f };
+        g.drawDashedLine ({ ox, z.getY(), ox, z.getBottom() }, dash, 2, 1.0f);
+        juce::Path tick;   // small triangle at the bottom edge (the top is the handles' tab row)
+        tick.addTriangle (ox - 4.0f, z.getBottom(), ox + 4.0f, z.getBottom(), ox, z.getBottom() - 5.0f);
+        g.fillPath (tick);
+    }
 
     // Start tab points into the kept region (right); End tab points left
     drawHandle (sx, TrimHandle::start, true);
@@ -890,6 +923,35 @@ void ConvoAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
         return;
     }
 
+    // double-click a trim handle: the spike-cutting handle jumps to the detected onset
+    // (tail-only wet in one gesture); the other — or with no onset — resets to its default.
+    // Checked before the display's double-click-to-load, which would otherwise swallow it.
+    if (e.getNumberOfClicks() >= 2)
+    {
+        if (const auto h = trimHandleAt (e.getPosition()); h != TrimHandle::none)
+        {
+            auto& a = processor.getAPVTS();
+            const float od   = onsetDisplayFrac();
+            const bool  snap = (h == onsetHandle() && od >= 0.0f);
+            float v = snap ? od : (h == TrimHandle::start ? 0.0f : 1.0f);
+
+            constexpr float minGap = 0.005f;   // same no-cross clamp as a drag
+            if (h == TrimHandle::start)
+                v = juce::jmin (v, a.getRawParameterValue ("irEnd")->load() - minGap);
+            else
+                v = juce::jmax (v, a.getRawParameterValue ("irStart")->load() + minGap);
+
+            if (auto* param = a.getParameter (h == TrimHandle::start ? "irStart" : "irEnd"))
+            {
+                param->beginChangeGesture();
+                param->setValueNotifyingHost (juce::jlimit (0.0f, 1.0f, v));   // params are 0..1, value == fraction
+                param->endChangeGesture();
+            }
+            repaint (dropZone);
+            return;
+        }
+    }
+
     if (e.getNumberOfClicks() >= 2 && dropZone.contains (e.getPosition()))   // double-click the display to load an IR
     {
         openFileChooser();
@@ -922,7 +984,15 @@ void ConvoAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
     if (activeHandle == TrimHandle::none)
         return;
 
-    const float frac = trimXToFrac (e.getPosition().x);
+    float frac = trimXToFrac (e.getPosition().x);
+
+    // magnet: the spike-cutting handle snaps to the onset marker within a few px (Alt defeats
+    // it for fine placement), so "remove the direct sound from the wet" is a single flick
+    if (const float od = onsetDisplayFrac();
+        od >= 0.0f && activeHandle == onsetHandle() && ! e.mods.isAltDown()
+        && std::abs (trimFracToX (frac) - trimFracToX (od)) <= (float) kTrimSnapPx)
+        frac = od;
+
     constexpr float minGap = 0.005f;   // handles can't cross — the bake always keeps a region
     if (activeHandle == TrimHandle::start)
         dragStartFrac = juce::jmin (frac, dragEndFrac - minGap);
@@ -1472,7 +1542,10 @@ void ConvoAudioProcessorEditor::timerCallback()
     }
 
     if (processor.getBakeGeneration() != lastBakeGen)
-        rebuildThumbnail();
+    {
+        onsetFrac = processor.getOnsetEndFrac();   // refreshed on file load; Reverse also bumps the
+        rebuildThumbnail();                        // generation, re-mirroring the marker for free
+    }
 
     updateKnobStates();   // light the Bass Mono indicator when engaged; relabel In/IR filters
 
