@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration "installer": a zip holding the compiled Inno Setup
+     installer exe (built from the already-signed plugin binaries).
+     Paste into the SignPath project's artifact configuration named "installer". -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <zip-file>
+    <pe-file path="Convo-*-Windows.exe">
+      <authenticode-sign/>
+    </pe-file>
+  </zip-file>
+</artifact-configuration>

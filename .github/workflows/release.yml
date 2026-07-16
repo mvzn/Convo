@@ -99,21 +99,121 @@ jobs:
         shell: bash
         run: packaging/linux/build-tarball.sh "$CONVO_VERSION"
 
+      # ---- Windows: sign VST3 -> build installer from signed bits -> sign installer.
+      # SignPath signing activates when the SIGNPATH_ORG_ID repo *variable* is set
+      # (plus the SIGNPATH_API_TOKEN secret); unset = unsigned release, same layout.
+      # Golden rule: never modify an artifact after signing — the installer is always
+      # compiled from the stage/ tree, which holds the signed bundle when signing is on.
+      - name: Stage VST3 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force stage | Out-Null
+          Copy-Item -Recurse build/Convo_artefacts/Release/VST3/Convo.vst3 stage/Convo.vst3
+          Compress-Archive -Path stage/Convo.vst3 -DestinationPath unsigned-plugins.zip
+
+      - name: Upload unsigned VST3 for signing
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORG_ID != ''
+        id: unsigned-plugins
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-plugins
+          path: unsigned-plugins.zip
+          retention-days: 1
+
+      - name: Sign VST3 (SignPath)
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORG_ID != ''
+        uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORG_ID }}
+          project-slug: convo
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: plugins
+          github-artifact-id: ${{ steps.unsigned-plugins.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-plugins
+
+      - name: Adopt signed VST3
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORG_ID != ''
+        shell: pwsh
+        run: |
+          Remove-Item -Recurse -Force stage
+          Expand-Archive (Get-ChildItem signed-plugins/*.zip).FullName -DestinationPath stage
+
+      - name: Package bare VST3 (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Compress-Archive -Path stage/Convo.vst3 -DestinationPath "dist/Convo-$env:CONVO_VERSION-Windows-VST3.zip"
+
       - name: Package installer (Windows)
         if: runner.os == 'Windows'
         shell: bash
         run: |
           choco install innosetup -y --no-progress
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "//DAppVersion=$CONVO_VERSION" packaging/windows/Convo.iss
+          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" \
+            "//DAppVersion=$CONVO_VERSION" \
+            "//DVst3Path=..\\..\\stage\\Convo.vst3" \
+            packaging/windows/Convo.iss
+
+      - name: Upload unsigned installer for signing
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORG_ID != ''
+        id: unsigned-installer
+        shell: pwsh
+        run: Compress-Archive -Path "dist/Convo-$env:CONVO_VERSION-Windows.exe" -DestinationPath unsigned-installer.zip
+
+      - name: Upload unsigned installer artifact
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORG_ID != ''
+        id: unsigned-installer-artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-installer
+          path: unsigned-installer.zip
+          retention-days: 1
+
+      - name: Sign installer (SignPath)
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORG_ID != ''
+        uses: signpath/github-action-submit-signing-request@b9d91eadd323de506c0c81cf0c7fe7438f3360fd # v2.2
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORG_ID }}
+          project-slug: convo
+          signing-policy-slug: release-signing
+          artifact-configuration-slug: installer
+          github-artifact-id: ${{ steps.unsigned-installer-artifact.outputs.artifact-id }}
+          wait-for-completion: true
+          output-artifact-directory: signed-installer
+
+      - name: Adopt + verify signed installer
+        if: runner.os == 'Windows' && vars.SIGNPATH_ORG_ID != ''
+        shell: pwsh
+        run: |
+          Expand-Archive (Get-ChildItem signed-installer/*.zip).FullName -DestinationPath dist -Force
+          $signtool = (Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\signtool.exe' | Select-Object -Last 1).FullName
+          & $signtool verify /pa /v "dist/Convo-$env:CONVO_VERSION-Windows.exe"
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      # ---- macOS: Developer ID signing + notarization (dormant until secrets are set;
+      # empty = unsigned build, fine for testing, blocked by Gatekeeper for end users).
+      - name: Import signing certs (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: packaging/macos/import-certs.sh
 
       - name: Package installer (macOS)
         if: runner.os == 'macOS'
         shell: bash
-        # Signing/notarization kick in automatically once these repo secrets are set;
-        # empty = unsigned build (fine for testing, blocked by Gatekeeper for end users).
         env:
           CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
           PKG_SIGN_IDENTITY: ${{ secrets.MACOS_PKG_SIGN_IDENTITY }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
         run: packaging/macos/build-pkg.sh "$CONVO_VERSION"
 
       - name: Upload installer artifact
@@ -133,6 +233,28 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+          # Only the finished installers/bundles — never the unsigned-* SignPath
+          # round-trip zips, which would otherwise be attached to the release.
+          pattern: installer-*
+
+      # SHA256SUMS over every release file, GPG-signed with the mvzn release key when
+      # the secret is set (public key: packaging/mvzn-release-key.asc). Unset = checksums only.
+      - name: Checksums + GPG signature
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          cd artifacts
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+          if [ -n "$GPG_PRIVATE_KEY" ]; then
+            printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+                --local-user mrk@mvzn.dev --armor --detach-sign SHA256SUMS
+            gpg --verify SHA256SUMS.asc SHA256SUMS
+          else
+            echo "GPG_PRIVATE_KEY not set - skipping signature (checksums only)"
+          fi
 
       - name: Publish draft GitHub Release
         uses: softprops/action-gh-release@v2
