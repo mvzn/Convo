@@ -120,6 +120,8 @@ private:
     // raw parameter pointers
     std::atomic<float>* dryParam      = nullptr;
     std::atomic<float>* wetParam      = nullptr;
+    std::atomic<float>* mixParam      = nullptr;   // equal-power Mix %, drives dry/wet while linked
+    std::atomic<float>* mixLinkParam  = nullptr;   // Link/Mix toggle: mix (on) vs dry/wet knobs (off)
     std::atomic<float>* irGainParam   = nullptr;
     std::atomic<float>* outputParam   = nullptr;
     std::atomic<float>* toneParam     = nullptr;

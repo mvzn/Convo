@@ -19,6 +19,7 @@
 #include "PluginEditor.h"
 #include "SoftClip.h"
 #include "MidSide.h"
+#include "MixLink.h"
 
 #include <cmath>
 
@@ -37,6 +38,8 @@ ConvoAudioProcessor::ConvoAudioProcessor()
 {
     dryParam      = apvts.getRawParameterValue ("dry");
     wetParam      = apvts.getRawParameterValue ("wet");
+    mixParam      = apvts.getRawParameterValue ("mix");
+    mixLinkParam  = apvts.getRawParameterValue ("mixLink");
     irGainParam   = apvts.getRawParameterValue ("irGain");
     outputParam   = apvts.getRawParameterValue ("output");
     toneParam     = apvts.getRawParameterValue ("tone");
@@ -85,6 +88,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout ConvoAudioProcessor::createP
     layout.add (std::make_unique<AudioParameterFloat> (
         ParameterID { "wet", 1 }, "Wet",
         NormalisableRange<float> (-60.0f, 6.0f, 0.1f), -60.0f, "dB"));
+
+    // Link/Mix: merges Dry/Wet into the single equal-power Mix control. While linked the
+    // audio derives both gains from "mix" (dry^2 + wet^2 = 1 — see MixLink.h) and the
+    // dry/wet params sit untouched, so unlinking restores the pre-link balance exactly.
+    layout.add (std::make_unique<AudioParameterBool> (
+        ParameterID { "mixLink", 1 }, "Link/Mix", false));
+
+    // the Mix control (active while Link/Mix is on): 0% = dry only, 100% = wet only.
+    // Default 0% == the default dry-only balance, so a bare host/preset flip of Link/Mix
+    // changes nothing until Mix moves; the editor's Link click seeds it from Wet.
+    layout.add (std::make_unique<AudioParameterFloat> (
+        ParameterID { "mix", 1 }, "Mix",
+        NormalisableRange<float> (0.0f, 100.0f, 0.1f), 0.0f, "%"));
 
     // gain of the IR itself — scales the impulse convolved with the input.
     // applied at the convolved output (identical by linearity, but real-time
@@ -308,8 +324,17 @@ void ConvoAudioProcessor::prepareToPlay (double sampleRate, int samplesPerBlock)
     msBassSm.reset     (sampleRate, 0.05);
     preDelaySm.reset   (sampleRate, 0.05);   // glide the delay length so modulation doesn't teleport the read pointer
 
-    dryGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (dryParam->load(),    -60.0f));
-    wetGainSm.setCurrentAndTargetValue    (juce::Decibels::decibelsToGain (wetParam->load(),    -60.0f));
+    // linked: both gains come from the Mix param's equal-power law (dry/wet params inert)
+    if (mixLinkParam->load() > 0.5f)
+    {
+        dryGainSm.setCurrentAndTargetValue (convo::mixToDryGain (mixParam->load()));
+        wetGainSm.setCurrentAndTargetValue (convo::mixToWetGain (mixParam->load()));
+    }
+    else
+    {
+        dryGainSm.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (dryParam->load(), -60.0f));
+        wetGainSm.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (wetParam->load(), -60.0f));
+    }
     irGainSm.setCurrentAndTargetValue     (juce::Decibels::decibelsToGain (irGainParam->load(), -60.0f));
     outputGainSm.setCurrentAndTargetValue (juce::Decibels::decibelsToGain (outputParam->load(), -60.0f));
     toneSm.setCurrentAndTargetValue       (toneParam->load());
@@ -680,8 +705,19 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
 
     // --- mix: dry + ducked wet, bypass crossfade, output trim, load fade ---
     polaritySm.setTargetValue   (polarityParam->load() > 0.5f ? -1.0f : 1.0f);
-    dryGainSm.setTargetValue    (juce::Decibels::decibelsToGain (dryParam->load(),    -60.0f));
-    wetGainSm.setTargetValue    (juce::Decibels::decibelsToGain (wetParam->load(),    -60.0f));
+    if (mixLinkParam->load() > 0.5f)
+    {
+        // Link/Mix engaged: the equal-power law on the Mix param replaces the dry/wet dB
+        // knobs (which sit untouched, so unlinking restores them). The 20 ms smoothers
+        // also absorb the link on/off gain step.
+        dryGainSm.setTargetValue (convo::mixToDryGain (mixParam->load()));
+        wetGainSm.setTargetValue (convo::mixToWetGain (mixParam->load()));
+    }
+    else
+    {
+        dryGainSm.setTargetValue (juce::Decibels::decibelsToGain (dryParam->load(), -60.0f));
+        wetGainSm.setTargetValue (juce::Decibels::decibelsToGain (wetParam->load(), -60.0f));
+    }
     irGainSm.setTargetValue     (juce::Decibels::decibelsToGain (irGainParam->load(), -60.0f));
     outputGainSm.setTargetValue (juce::Decibels::decibelsToGain (outputParam->load(), -60.0f));
     bypassSm.setTargetValue     (bypassParam->load() > 0.5f ? 1.0f : 0.0f);

@@ -9,6 +9,8 @@ signal convolved with it. Free and open source (AGPLv3).
 |---|---|---|---|
 | Dry | −60…+6 dB | 0 dB | Dry (unprocessed) level |
 | Wet | −60…+6 dB | −60 dB | Convolved (wet) level |
+| Mix | 0…100 % | 0 % | Equal-power dry/wet balance while Link/Mix is on |
+| Link/Mix | on/off | off | Merges Dry and Wet into the single Mix knob; unlinking restores their values |
 | IR Gain | −60…+6 dB | 0 dB | Gain of the IR, in series with Wet |
 | Output | −60…+12 dB | 0 dB | Output trim — the drag line on the OUT meter (double-click resets) |
 | Tone | −100…+100 % | 0 | Tilt EQ on the wet (left darker, right brighter) |

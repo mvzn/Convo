@@ -162,25 +162,33 @@ private:
     juce::String              bakedLenText;          // cached "N.NN s" label (no per-paint String build)
 
     // parameter controls (Output has no knob — it's the fader line on the OUT meter)
-    juce::Slider drySlider, wetSlider, irGainSlider, toneSlider, inHPSlider, inLPSlider, filterQSlider,
+    juce::Slider drySlider, wetSlider, mixSlider, irGainSlider, toneSlider, inHPSlider, inLPSlider, filterQSlider,
                  preDelaySlider, widthSlider, msBassSlider,
                  duckSlider, duckRelSlider, gateSlider, decaySlider, taperSlider, stretchSlider, dampSlider;
     CappedSlider fadeInSlider;   // hard-capped to the IR / decay-cut length so the thumb can't overshoot
-    juce::Label  dryLabel, wetLabel, irGainLabel, toneLabel, inHPLabel, inLPLabel, filterQLabel,
+    juce::Label  dryLabel, wetLabel, mixLabel, irGainLabel, toneLabel, inHPLabel, inLPLabel, filterQLabel,
                  preDelayLabel, widthLabel, msBassLabel,
                  duckLabel, duckRelLabel, gateLabel, fadeInLabel, decayLabel, taperLabel, stretchLabel, dampLabel;
     juce::TextButton   reverseButton { "Reverse" }, irNormButton { "Norm IR" };   // LED text-buttons on the waveform
     juce::ToggleButton filterIRButton { "Filter IR" },
                        wetCompButton { "Wet Comp" },
+                       mixLinkButton { "Link/Mix" },   // merges Dry/Wet into the Mix knob (VOLUME caption)
                        polarityButton { juce::String::fromUTF8 ("\xC3\x98") },   // Ø — invert the wet polarity
                        bypassButton { "Bypass" };
 
+    // Link/Mix merge animation: Dry/Wet slide to the panel centre and fade out while the
+    // Mix knob fades in (and back on unlink). Phase 0 = two knobs, 1 = one Mix knob;
+    // eased toward the toggle state on the 30 Hz timer, laying the knobs out each tick.
+    void layoutVolumeKnobs();
+    float linkMerge = 0.0f;
+    juce::Rectangle<int> volCellDry, volCellWet, volCellMix;   // rest cells + shared centre cell
+
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
-    std::unique_ptr<SliderAttachment> dryAtt, wetAtt, irGainAtt, toneAtt, inHPAtt, inLPAtt, filterQAtt,
+    std::unique_ptr<SliderAttachment> dryAtt, wetAtt, mixAtt, irGainAtt, toneAtt, inHPAtt, inLPAtt, filterQAtt,
                                       preDelayAtt, widthAtt, msBassAtt,
                                       duckAtt, duckRelAtt, gateAtt, fadeInAtt, decayAtt, taperAtt, stretchAtt, dampAtt;
-    std::unique_ptr<ButtonAttachment> reverseAtt, irNormAtt, filterIRAtt, wetCompAtt, polarityAtt, bypassAtt;
+    std::unique_ptr<ButtonAttachment> reverseAtt, irNormAtt, filterIRAtt, wetCompAtt, mixLinkAtt, polarityAtt, bypassAtt;
     bool draggingOutput = false;   // dragging the Output fader line on the OUT meter
 
     // meters: shown values + slower-decaying peak-hold lines, with last-painted

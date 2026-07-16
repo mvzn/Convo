@@ -17,6 +17,7 @@
 
 #include "PluginEditor.h"
 #include "UpdateCheck.h"
+#include "MixLink.h"
 
 namespace
 {
@@ -72,6 +73,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     setup (drySlider,      dryLabel,      "Dry");
     setup (wetSlider,      wetLabel,      "Wet");
+    setup (mixSlider,      mixLabel,      "Mix");   // the merged Dry/Wet knob while Link/Mix is on
     setup (irGainSlider,   irGainLabel,   "IR Gain");
     setup (toneSlider,     toneLabel,     "Tone");
     setup (inHPSlider,     inHPLabel,     "In HP");
@@ -90,6 +92,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     setup (dampSlider,     dampLabel,     "Damp");
 
     wetCompButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::mint);
+    mixLinkButton.setColour   (juce::ToggleButton::tickColourId, ConvoColours::copper);   // copper = mode change, like Filter IR
     filterIRButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::copper);   // orange = IR-baked filter
     polarityButton.setColour  (juce::ToggleButton::tickColourId, ConvoColours::mint);
     bypassButton.setColour    (juce::ToggleButton::tickColourId, ConvoColours::copper);
@@ -118,6 +121,11 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     // --- mix / output ---
     drySlider.setTooltip    ("Level of the unprocessed (dry) signal in the mix");
     wetSlider.setTooltip    ("Level of the convolved (wet) signal in the mix");
+    mixLinkButton.setTooltip ("Merge Dry and Wet into a single equal-power Mix knob "
+                              "(dry\xc2\xb2 + wet\xc2\xb2 = 1, constant combined loudness). Dry and Wet "
+                              "keep their values while linked and come back when you unlink");
+    mixSlider.setTooltip     ("Equal-power dry/wet balance while Link/Mix is on: 0% = dry only, "
+                              "100% = wet only, constant combined loudness across the sweep");
     irGainSlider.setTooltip ("Gain of the impulse response itself (scales the wet convolution, "
                              "and the waveform height above). Separate from Wet (the wet mix level)");
     gateSlider.setTooltip    ("Gate on the dry signal feeding the IR: cuts the convolution input when the "
@@ -148,7 +156,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     // --- output guards / global ---
     bypassButton.setTooltip    ("Passes the dry input through at unity");
 
-    for (auto* b : { &filterIRButton, &wetCompButton, &polarityButton, &bypassButton })
+    for (auto* b : { &filterIRButton, &wetCompButton, &mixLinkButton, &polarityButton, &bypassButton })
     {
         b->setColour (juce::ToggleButton::textColourId, ConvoColours::label);
         addAndMakeVisible (*b);
@@ -156,6 +164,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
 
     dryAtt      = std::make_unique<SliderAttachment> (apvts, "dry",         drySlider);
     wetAtt      = std::make_unique<SliderAttachment> (apvts, "wet",         wetSlider);
+    mixAtt      = std::make_unique<SliderAttachment> (apvts, "mix",         mixSlider);
     irGainAtt   = std::make_unique<SliderAttachment> (apvts, "irGain",      irGainSlider);
     filterQAtt  = std::make_unique<SliderAttachment> (apvts, "filterQ",     filterQSlider);
     gateAtt     = std::make_unique<SliderAttachment> (apvts, "gate",        gateSlider);
@@ -176,15 +185,40 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     irNormAtt    = std::make_unique<ButtonAttachment> (apvts, "irNorm",    irNormButton);
     filterIRAtt  = std::make_unique<ButtonAttachment> (apvts, "filterIR",  filterIRButton);
     wetCompAtt   = std::make_unique<ButtonAttachment> (apvts, "wetComp",   wetCompButton);
+    mixLinkAtt   = std::make_unique<ButtonAttachment> (apvts, "mixLink",   mixLinkButton);
     polarityAtt  = std::make_unique<ButtonAttachment> (apvts, "polarity",  polarityButton);
     bypassAtt    = std::make_unique<ButtonAttachment> (apvts, "bypass",    bypassButton);
+
+    // --- Link/Mix: engaging the link seeds Mix from the current Wet level (see MixLink.h),
+    // so the wet you were hearing is preserved and only the dry snaps onto the equal-power
+    // circle (a wet above 0 dB clamps to 100%). The dry/wet params are never written while
+    // linked — the processor derives both gains from "mix" — so unlinking restores them
+    // exactly. Only a mouse click on the button seeds: onClick also fires when a host/preset
+    // flip reaches the attachment, and seeding there would clobber the restored mix value
+    // (the cursor-over test is what separates a real click from a programmatic toggle).
+    mixLinkButton.onClick = [this]
+    {
+        if (! mixLinkButton.getToggleState() || ! mixLinkButton.isMouseOver (true))
+            return;
+        if (auto* mixPar = processor.getAPVTS().getParameter ("mix"))
+        {
+            const float pct = convo::wetDbToMixPct ((float) wetSlider.getValue());
+            mixPar->beginChangeGesture();
+            mixPar->setValueNotifyingHost (mixPar->convertTo0to1 (pct));
+            mixPar->endChangeGesture();
+        }
+    };
+
+    // start the merge animation at its resting phase for the restored link state (the
+    // attachment above has already set the toggle); the timer only animates changes
+    linkMerge = mixLinkButton.getToggleState() ? 1.0f : 0.0f;
 
     // show the unit on each knob's value box (dB / Hz / ms / %). The slider attachment points
     // textFromValueFunction at the parameter's getText, which omits the label, so wrap it to
     // append the parameter's own unit — skipping values that already carry one (e.g. Decay's
     // "Off" / "... ms") so nothing gets doubled.
     struct { juce::Slider* s; const char* id; } unitSliders[] = {
-        { &drySlider, "dry" }, { &wetSlider, "wet" }, { &irGainSlider, "irGain" },
+        { &drySlider, "dry" }, { &wetSlider, "wet" }, { &mixSlider, "mix" }, { &irGainSlider, "irGain" },
         { &toneSlider, "tone" }, { &inHPSlider, "inHP" }, { &filterQSlider, "filterQ" }, { &gateSlider, "gate" },
         { &inLPSlider, "inLP" }, { &preDelaySlider, "preDelay" }, { &widthSlider, "width" },
         { &msBassSlider, "msBass" }, { &duckSlider, "duck" }, { &duckRelSlider, "duckRelease" },
@@ -1236,6 +1270,65 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
     }
 }
 
+// Tight [label | knob | value] stack, vertically centred in the cell so the knob keeps its
+// original position while the label and value box hug it (rather than spreading to the edges).
+// Shared by resized()'s grid placement and the Link/Mix merge animation, which slides the
+// VOLUME cells around between layouts.
+static void placeKnobInCell (juce::Rectangle<int> cell, juce::Slider& s, juce::Label& l)
+{
+    // --- nudge these two for finer vertical spacing (px); lower = closer to the knob ---
+    const int labelGap = 3;    // gap between the label and the knob
+    const int valueGap = 3;    // gap between the knob and the value box
+    const int labelH   = 15;   // label band height
+    const int textBoxH = 17;   // value box height (must match styleRotary's setTextBoxStyle)
+
+    const int knobBox = juce::jmin (cell.getWidth() - 8,
+                                    cell.getHeight() - labelH - labelGap - valueGap - textBoxH);
+    const int stackH  = labelH + labelGap + knobBox + valueGap + textBoxH;
+    auto stack = cell.withSizeKeepingCentre (cell.getWidth(), stackH);
+
+    l.setBounds (stack.removeFromTop (labelH));
+    stack.removeFromTop (labelGap);
+    auto col = stack.reduced (4, 0);
+    s.setBounds (juce::Rectangle<int> (col.getX(), stack.getY(), col.getWidth(), knobBox + valueGap + textBoxH));
+}
+
+void ConvoAudioProcessorEditor::layoutVolumeKnobs()
+{
+    if (volCellMix.isEmpty())
+        return;   // first resized() hasn't run yet
+
+    // smoothstep the merge phase for the glide (eases in and out); the fades use the raw
+    // phase — linear alpha against an eased position reads as one continuous gesture
+    const float t = linkMerge * linkMerge * (3.0f - 2.0f * linkMerge);
+    auto lerpCell = [t] (juce::Rectangle<int> from, juce::Rectangle<int> to)
+    {
+        const auto a = from.toFloat(), b = to.toFloat();
+        return juce::Rectangle<float> (a.getX() + (b.getX() - a.getX()) * t,
+                                       a.getY() + (b.getY() - a.getY()) * t,
+                                       a.getWidth(), a.getHeight()).toNearestInt();
+    };
+    placeKnobInCell (lerpCell (volCellDry, volCellMix), drySlider, dryLabel);
+    placeKnobInCell (lerpCell (volCellWet, volCellMix), wetSlider, wetLabel);
+    placeKnobInCell (volCellMix, mixSlider, mixLabel);
+
+    const float pairAlpha = 1.0f - linkMerge;
+    for (auto* c : std::initializer_list<juce::Component*> { &drySlider, &dryLabel, &wetSlider, &wetLabel })
+    {
+        c->setAlpha (pairAlpha);
+        c->setVisible (pairAlpha > 0.01f);
+    }
+    for (auto* c : std::initializer_list<juce::Component*> { &mixSlider, &mixLabel })
+    {
+        c->setAlpha (linkMerge);
+        c->setVisible (linkMerge > 0.01f);
+    }
+    // knobs in transit shouldn't catch clicks meant for the layout they're fading out of
+    drySlider.setInterceptsMouseClicks (pairAlpha > 0.5f, pairAlpha > 0.5f);
+    wetSlider.setInterceptsMouseClicks (pairAlpha > 0.5f, pairAlpha > 0.5f);
+    mixSlider.setInterceptsMouseClicks (linkMerge > 0.5f, linkMerge > 0.5f);
+}
+
 void ConvoAudioProcessorEditor::resized()
 {
     auto area = getLocalBounds().reduced (14);
@@ -1331,23 +1424,7 @@ void ConvoAudioProcessorEditor::resized()
 
     auto placeKnob = [] (juce::Rectangle<int> cell, juce::Slider& s, juce::Label& l)
     {
-        // Tight [label | knob | value] stack, vertically centred in the cell so the knob keeps its
-        // original position while the label and value box hug it (rather than spreading to the edges).
-        // --- nudge these two for finer vertical spacing (px); lower = closer to the knob ---
-        const int labelGap = 3;    // gap between the label and the knob
-        const int valueGap = 3;    // gap between the knob and the value box
-        const int labelH   = 15;   // label band height
-        const int textBoxH = 17;   // value box height (must match styleRotary's setTextBoxStyle)
-
-        const int knobBox = juce::jmin (cell.getWidth() - 8,
-                                        cell.getHeight() - labelH - labelGap - valueGap - textBoxH);
-        const int stackH  = labelH + labelGap + knobBox + valueGap + textBoxH;
-        auto stack = cell.withSizeKeepingCentre (cell.getWidth(), stackH);
-
-        l.setBounds (stack.removeFromTop (labelH));
-        stack.removeFromTop (labelGap);
-        auto col = stack.reduced (4, 0);
-        s.setBounds (juce::Rectangle<int> (col.getX(), stack.getY(), col.getWidth(), knobBox + valueGap + textBoxH));
+        placeKnobInCell (cell, s, l);
     };
 
     auto knobArea = [] (juce::Rectangle<int> p)
@@ -1395,16 +1472,26 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (gcell (ka, 4, 2), toneSlider,     toneLabel);
         placeKnob (gcell (ka, 4, 3), widthSlider,    widthLabel);
     }
-    {   // VOLUME (2): Dry / Wet
+    {   // VOLUME (2): Dry / Wet — or the single merged Mix knob while Link/Mix is on.
+        // Only the rest cells are computed here; layoutVolumeKnobs() places the three
+        // knobs for the current merge phase (and animates them from the timer).
         auto ka = knobArea (volumePanel);
-        placeKnob (gcell (ka, 2, 0), drySlider, dryLabel);
-        placeKnob (gcell (ka, 2, 1), wetSlider, wetLabel);
+        volCellDry = gcell (ka, 2, 0);
+        volCellWet = gcell (ka, 2, 1);
+        volCellMix = volCellDry.getUnion (volCellWet)
+                               .withSizeKeepingCentre (volCellDry.getWidth(), volCellDry.getHeight());
+        layoutVolumeKnobs();
     }
 
     // Filter IR: inline with the FILTER caption, right side
     {
         auto cap = filterPanel.reduced (10, 0).removeFromTop (24).translated(5,3);
         filterIRButton.setBounds (cap.removeFromRight (84).withSizeKeepingCentre (84, 20));
+    }
+    // Link/Mix: inline with the VOLUME caption, right side — same idiom as Filter IR
+    {
+        auto cap = volumePanel.reduced (10, 0).removeFromTop (24).translated (5, 3);
+        mixLinkButton.setBounds (cap.removeFromRight (78).withSizeKeepingCentre (78, 20));
     }
 
     renderBackground();
@@ -1511,6 +1598,18 @@ void ConvoAudioProcessorEditor::timerCallback()
     animText (reverseButton,     reverseLit, reverseButton.getToggleState() ? 1.0f : 0.0f,       ConvoColours::label, ConvoColours::mint);
     animText (irNormButton,      normLit,    irNormButton.getToggleState()  ? 1.0f : 0.0f,       ConvoColours::label, ConvoColours::mint);
     animText (auditionSrcButton, bakedBlend, auditionSrcButton.getToggleState() ? 1.0f : 0.0f,   ConvoColours::mint,  ConvoColours::copper);
+
+    // Link/Mix merge: ease the VOLUME knobs between the two-knob and merged-Mix layouts
+    // (Dry/Wet glide to the centre and fade out as the Mix knob fades in, and back)
+    {
+        const float target = mixLinkButton.getToggleState() ? 1.0f : 0.0f;
+        if (std::abs (linkMerge - target) > 0.0015f)
+        {
+            linkMerge += (target - linkMerge) * 0.25f;
+            if (std::abs (linkMerge - target) < 0.02f) linkMerge = target;
+            layoutVolumeKnobs();
+        }
+    }
 
     // fade-in limit: the longest usable fade-in adapts to the IR and shrinks with the decay cut
     // (leaves >= kMinTailMs of tail), so a 2 s IR caps the ramp near 1975 ms. Feed it to the slider
