@@ -34,6 +34,9 @@ endif()
 juce_add_plugin(Convo
     PRODUCT_NAME             "Convo"
     COMPANY_NAME             "mvzn"
+    COMPANY_WEBSITE          "https://mvzn.dev"
+    COMPANY_EMAIL            "mrk@mvzn.dev"
+    COMPANY_COPYRIGHT        "(c) 2026 mvzn - AGPL-3.0"
     BUNDLE_ID                "com.mvzn.Convo"
     PLUGIN_MANUFACTURER_CODE "Mvzn"
     PLUGIN_CODE              "Cnvo"

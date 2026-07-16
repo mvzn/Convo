@@ -12,14 +12,24 @@
 #endif
 
 ; The built bundle, resolved relative to THIS script (packaging\windows\ -> repo root\build\...).
-#define Vst3Path "..\..\build\Convo_artefacts\Release\VST3\Convo.vst3"
+; Overridable (//DVst3Path=...) so CI can point it at the SignPath-signed copy instead —
+; the installer must embed already-signed binaries (never modify an artifact after signing).
+#ifndef Vst3Path
+  #define Vst3Path "..\..\build\Convo_artefacts\Release\VST3\Convo.vst3"
+#endif
 
 [Setup]
 AppId={{8B5F1C9A-1D2E-4C3B-9A77-436F6E766F31}
 AppName=Convo
 AppVersion={#AppVersion}
 AppPublisher=mvzn
-AppPublisherURL=https://github.com/mvzn/Convo
+AppPublisherURL=https://mvzn.dev
+AppSupportURL=https://github.com/mvzn/Convo
+AppContact=mrk@mvzn.dev
+AppCopyright=(c) 2026 mvzn - AGPL-3.0
+VersionInfoCompany=mvzn
+VersionInfoVersion={#AppVersion}
+VersionInfoCopyright=(c) 2026 mvzn - AGPL-3.0
 ; {autocf64} = Common Files (admin install) or %LOCALAPPDATA%\Programs\Common (per-user)
 DefaultDirName={autocf64}\VST3
 AppendDefaultDirName=no
