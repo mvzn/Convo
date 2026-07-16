@@ -63,13 +63,16 @@ cmake -B build          # defaults to Release
 cmake --build build
 ```
 
-JUCE 8.0.6 is fetched automatically (pinned). The VST3 is built on all platforms; AU on macOS,
-and `COPY_PLUGIN_AFTER_BUILD` installs it to your user plugin folder.
+JUCE 8.0.6 is fetched automatically (pinned).
 
-**Use Release for real use.** A fresh configure defaults to Release; a Debug build is *much*
-slower and stutters/drops out on long (multi-second) IRs — it's for debugging only. For a
-debuggable but real-time-capable build use `-DCMAKE_BUILD_TYPE=RelWithDebInfo`; for full Debug,
-`-DCMAKE_BUILD_TYPE=Debug` (don't leave that one installed).
+## Code signing
+
+Free code signing on Windows provided by [SignPath.io](https://signpath.io),
+certificate by [SignPath Foundation](https://signpath.org).
+
+Releases include a `SHA256SUMS` file signed with the mvzn release key
+([`packaging/mvzn-release-key.asc`](packaging/mvzn-release-key.asc)) — verify a download with
+`gpg --verify SHA256SUMS.asc SHA256SUMS && sha256sum -c SHA256SUMS`.
 
 ## License
 
