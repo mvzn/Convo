@@ -1,7 +1,7 @@
 # Convo
 
 A simple **convolution audio effect**. Drop an impulse response, hear your
-signal convolved with it. Free and open source (AGPLv3).
+signal convolved with it(AGPLv3).
 
 ## Controls
 
