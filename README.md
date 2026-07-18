@@ -1,7 +1,15 @@
 # Convo
 
 A simple **convolution audio effect**. Drop an impulse response, hear your
-signal convolved with it(AGPLv3).
+signal convolved with it. The source is open under the AGPLv3; signed,
+ready-to-install builds are sold for a small price.
+
+## Get Convo
+
+- **Buy a build** — signed installers and plugin bundles for Windows, macOS, and
+  Linux from [mvzn.dev](https://mvzn.dev). Buying funds development.
+- **Build from source** — this repository is the complete plugin under the
+  AGPLv3; see [Build](#build) below.
 
 ## Controls
 
@@ -81,6 +89,10 @@ Releases include a `SHA256SUMS` file signed with the mvzn release key
 **GNU AGPLv3** — © 2026 mvzn. See [LICENSE](LICENSE).
 
 Convo is built with [JUCE](https://juce.com), used under its AGPLv3 option. JUCE is
-dual-licensed (AGPLv3 or commercial); distributing Convo as free open source under the
+dual-licensed (AGPLv3 or commercial); distributing Convo open source under the
 AGPLv3 is what keeps it compliant without a paid JUCE licence. Any work that links this
 code is therefore also bound by the AGPLv3.
+
+Selling builds of AGPL software is expressly permitted by the licence: every buyer
+receives the same AGPLv3 freedoms, and the complete corresponding source lives in
+this repository.
