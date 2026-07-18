@@ -55,11 +55,14 @@ jobs:
       - if: runner.os == 'Windows'
         uses: ilammy/msvc-dev-cmd@v1
 
+      # Own cache namespace (release-deps-*): build.yml's deps-* caches are built with
+      # sccache as the compiler launcher, and juceaide's cached build tree hardcodes that
+      # launcher path — restoring one here (where sccache isn't installed) breaks configure.
       - uses: actions/cache@v4
         with:
           path: build/_deps
-          key: deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
-          restore-keys: deps-${{ runner.os }}-
+          key: release-deps-${{ runner.os }}-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: release-deps-${{ runner.os }}-
 
       - name: Configure
         shell: bash
