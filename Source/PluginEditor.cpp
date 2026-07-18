@@ -189,13 +189,10 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     polarityAtt  = std::make_unique<ButtonAttachment> (apvts, "polarity",  polarityButton);
     bypassAtt    = std::make_unique<ButtonAttachment> (apvts, "bypass",    bypassButton);
 
-    // --- Link/Mix: engaging the link seeds Mix from the current Wet level (see MixLink.h),
-    // so the wet you were hearing is preserved and only the dry snaps onto the equal-power
-    // circle (a wet above 0 dB clamps to 100%). The dry/wet params are never written while
-    // linked — the processor derives both gains from "mix" — so unlinking restores them
-    // exactly. Only a mouse click on the button seeds: onClick also fires when a host/preset
-    // flip reaches the attachment, and seeding there would clobber the restored mix value
-    // (the cursor-over test is what separates a real click from a programmatic toggle).
+    // --- Link/Mix: a click on the link seeds Mix from the current Wet level (see MixLink.h),
+    // preserving the audible wet while the dry snaps onto the equal-power circle. The
+    // cursor-over test matters: onClick also fires when a host/preset flip reaches the
+    // attachment, and seeding there would clobber the restored mix value.
     mixLinkButton.onClick = [this]
     {
         if (! mixLinkButton.getToggleState() || ! mixLinkButton.isMouseOver (true))
@@ -209,8 +206,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
         }
     };
 
-    // start the merge animation at its resting phase for the restored link state (the
-    // attachment above has already set the toggle); the timer only animates changes
+    // open at the resting merge phase for the restored link state; the timer only animates changes
     linkMerge = mixLinkButton.getToggleState() ? 1.0f : 0.0f;
 
     // show the unit on each knob's value box (dB / Hz / ms / %). The slider attachment points
@@ -1272,8 +1268,7 @@ void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
 
 // Tight [label | knob | value] stack, vertically centred in the cell so the knob keeps its
 // original position while the label and value box hug it (rather than spreading to the edges).
-// Shared by resized()'s grid placement and the Link/Mix merge animation, which slides the
-// VOLUME cells around between layouts.
+// Shared by resized()'s grid placement and the Link/Mix merge animation.
 static void placeKnobInCell (juce::Rectangle<int> cell, juce::Slider& s, juce::Label& l)
 {
     // --- nudge these two for finer vertical spacing (px); lower = closer to the knob ---
@@ -1472,9 +1467,7 @@ void ConvoAudioProcessorEditor::resized()
         placeKnob (gcell (ka, 4, 2), toneSlider,     toneLabel);
         placeKnob (gcell (ka, 4, 3), widthSlider,    widthLabel);
     }
-    {   // VOLUME (2): Dry / Wet — or the single merged Mix knob while Link/Mix is on.
-        // Only the rest cells are computed here; layoutVolumeKnobs() places the three
-        // knobs for the current merge phase (and animates them from the timer).
+    {   // VOLUME (2): Dry / Wet, merged into the Mix knob by layoutVolumeKnobs() while linked
         auto ka = knobArea (volumePanel);
         volCellDry = gcell (ka, 2, 0);
         volCellWet = gcell (ka, 2, 1);
@@ -1600,7 +1593,6 @@ void ConvoAudioProcessorEditor::timerCallback()
     animText (auditionSrcButton, bakedBlend, auditionSrcButton.getToggleState() ? 1.0f : 0.0f,   ConvoColours::mint,  ConvoColours::copper);
 
     // Link/Mix merge: ease the VOLUME knobs between the two-knob and merged-Mix layouts
-    // (Dry/Wet glide to the centre and fade out as the Mix knob fades in, and back)
     {
         const float target = mixLinkButton.getToggleState() ? 1.0f : 0.0f;
         if (std::abs (linkMerge - target) > 0.0015f)

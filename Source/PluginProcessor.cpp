@@ -707,9 +707,8 @@ void ConvoAudioProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::
     polaritySm.setTargetValue   (polarityParam->load() > 0.5f ? -1.0f : 1.0f);
     if (mixLinkParam->load() > 0.5f)
     {
-        // Link/Mix engaged: the equal-power law on the Mix param replaces the dry/wet dB
-        // knobs (which sit untouched, so unlinking restores them). The 20 ms smoothers
-        // also absorb the link on/off gain step.
+        // linked: the equal-power law on Mix replaces the dry/wet knobs (left untouched, so
+        // unlinking restores them); the gain smoothers absorb the link on/off step
         dryGainSm.setTargetValue (convo::mixToDryGain (mixParam->load()));
         wetGainSm.setTargetValue (convo::mixToWetGain (mixParam->load()));
     }

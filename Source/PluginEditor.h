@@ -177,8 +177,7 @@ private:
                        bypassButton { "Bypass" };
 
     // Link/Mix merge animation: Dry/Wet slide to the panel centre and fade out while the
-    // Mix knob fades in (and back on unlink). Phase 0 = two knobs, 1 = one Mix knob;
-    // eased toward the toggle state on the 30 Hz timer, laying the knobs out each tick.
+    // Mix knob fades in (and back on unlink). Phase 0 = two knobs, 1 = one Mix knob.
     void layoutVolumeKnobs();
     float linkMerge = 0.0f;
     juce::Rectangle<int> volCellDry, volCellWet, volCellMix;   // rest cells + shared centre cell
