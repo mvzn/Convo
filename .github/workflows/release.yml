@@ -1,10 +1,14 @@
 name: Release
 
 # Tag a version to cut a release:  git tag v1.0.0 && git push origin v1.0.0
-# Builds all three platforms, validates, packages the installers, and publishes a
-# DRAFT GitHub Release with them attached. Review the draft, then hit Publish — the
-# in-plugin update check only sees published (non-draft) releases, so users aren't
-# notified until you publish.
+# Builds all three platforms, validates, packages, and publishes a DRAFT GitHub
+# Release. Review the draft, then hit Publish — the in-plugin update check only sees
+# published (non-draft) releases, so users aren't notified until you publish.
+#
+# Channel split: the public release carries the bare plugin zips, the Linux tarball,
+# and the signed checksums. The Windows/macOS INSTALLERS are withheld — they're sold
+# (Gumroad) and live only as workflow-run artifacts (installer-*); download them from
+# this run's artifacts to stock the store.
 on:
   push:
     tags:
@@ -239,6 +243,14 @@ jobs:
           # Only the finished installers/bundles — never the unsigned-* SignPath
           # round-trip zips, which would otherwise be attached to the release.
           pattern: installer-*
+
+      # installers are sold, not attached to the public release (see the header comment);
+      # they remain in the installer-* workflow artifacts for the store upload
+      - name: Withhold installers from the public release
+        run: |
+          mkdir -p withheld
+          mv artifacts/*-Windows.exe artifacts/*-macOS.pkg withheld/ || true
+          ls artifacts
 
       # SHA256SUMS over every release file, GPG-signed with the mvzn release key when
       # the secret is set (public key: packaging/mvzn-release-key.asc). Unset = checksums only.
