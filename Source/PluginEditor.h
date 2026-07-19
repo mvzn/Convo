@@ -117,6 +117,7 @@ private:
     void drawTrimHandles (juce::Graphics&);     // dim trimmed regions + draw the Start/End handles
     void updateKnobStates();           // mode hints: dim X-Over (Bass Mono off), relabel In->IR (Filter IR on)
     float uiScale() const;             // physical px per logical px, for crisp caches
+    float paintScale = 0.0f;           // real render scale captured in paint(); 0 = not yet seen
 
     // IR trim handle geometry / hit-testing (all in editor-local coords)
     enum class TrimHandle { none, start, end };

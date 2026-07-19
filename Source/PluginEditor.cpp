@@ -331,9 +331,15 @@ void ConvoAudioProcessorEditor::saveSupersampledScreenshot()
 
 float ConvoAudioProcessorEditor::uiScale() const
 {
+    // The paint context's physical scale is the ground truth (display DPI x host zoom); until the
+    // first paint captures it, approximate as display DPI x the host's component transforms.
+    if (paintScale > 0.0f)
+        return paintScale;
+
+    float scale = juce::Component::getApproximateScaleFactorForComponent (this);
     if (auto* display = juce::Desktop::getInstance().getDisplays().getDisplayForRect (getScreenBounds()))
-        return (float) display->scale;
-    return 1.0f;
+        scale *= (float) display->scale;
+    return scale > 0.0f ? scale : 1.0f;
 }
 
 void ConvoAudioProcessorEditor::rebuildThumbnail()
@@ -1168,6 +1174,17 @@ void ConvoAudioProcessorEditor::updateKnobStates()
 
 void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
 {
+    // Re-render the caches if the real render scale differs from the one they were built at
+    // (first paint in a scaled host, monitor move, host zoom change) — otherwise they resample soft.
+    const float ps = g.getInternalContext().getPhysicalPixelScaleFactor();
+    if (ps > 0.0f && std::abs (ps - paintScale) > 0.01f)
+    {
+        paintScale = ps;
+        renderBackground();
+        renderWaveImage();
+        renderKernelImage();
+    }
+
     if (backgroundImage.isValid())
         g.drawImage (backgroundImage, getLocalBounds().toFloat());
     else
@@ -1476,15 +1493,23 @@ void ConvoAudioProcessorEditor::resized()
         layoutVolumeKnobs();
     }
 
+    // The inline caption toggles size to their text like placeTog — a fixed width truncates to
+    // "Link/..." wherever the platform default font runs wider (e.g. Verdana on Windows).
+    auto inlineTogWidth = [&togFont] (const juce::ToggleButton& tb)
+    {
+        return juce::roundToInt (juce::GlyphArrangement::getStringWidth (togFont, tb.getButtonText())) + 36;
+    };
     // Filter IR: inline with the FILTER caption, right side
     {
         auto cap = filterPanel.reduced (10, 0).removeFromTop (24).translated(5,3);
-        filterIRButton.setBounds (cap.removeFromRight (84).withSizeKeepingCentre (84, 20));
+        const int w = inlineTogWidth (filterIRButton);
+        filterIRButton.setBounds (cap.removeFromRight (w).withSizeKeepingCentre (w, 20));
     }
     // Link/Mix: inline with the VOLUME caption, right side — same idiom as Filter IR
     {
         auto cap = volumePanel.reduced (10, 0).removeFromTop (24).translated (5, 3);
-        mixLinkButton.setBounds (cap.removeFromRight (78).withSizeKeepingCentre (78, 20));
+        const int w = inlineTogWidth (mixLinkButton);
+        mixLinkButton.setBounds (cap.removeFromRight (w).withSizeKeepingCentre (w, 20));
     }
 
     renderBackground();
