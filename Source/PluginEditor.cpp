@@ -46,8 +46,8 @@ namespace
     const juce::Colour meterAmber { 0xffd9a13b };
 }
 
-ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
-    : juce::AudioProcessorEditor (&p), processor (p)
+ConvoEditorContent::ConvoEditorContent (ConvoAudioProcessor& p)
+    : processor (p)
 {
     setLookAndFeel (&lookAndFeel);
     setOpaque (true);                       // paint() covers everything — skip host compositing
@@ -294,7 +294,7 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
    #endif
 }
 
-ConvoAudioProcessorEditor::~ConvoAudioProcessorEditor()
+ConvoEditorContent::~ConvoEditorContent()
 {
     stopTimer();
     thumbnail->removeChangeListener (this);
@@ -302,7 +302,7 @@ ConvoAudioProcessorEditor::~ConvoAudioProcessorEditor()
 }
 
 #if JUCE_DEBUG
-bool ConvoAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
+bool ConvoEditorContent::keyPressed (const juce::KeyPress& key)
 {
     if (key == juce::KeyPress ('s', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 0))
     {
@@ -315,7 +315,7 @@ bool ConvoAudioProcessorEditor::keyPressed (const juce::KeyPress& key)
 // Renders the editor (and all its children) into an off-screen image at kSupersample x its
 // logical size — resolution-independent since almost everything here is vector/text, not
 // bitmaps — and writes it as a lossless PNG to the desktop. Cmd/Ctrl+Shift+S.
-void ConvoAudioProcessorEditor::saveSupersampledScreenshot()
+void ConvoEditorContent::saveSupersampledScreenshot()
 {
     constexpr float kSupersample = 4.0f;
     auto image = createComponentSnapshot (getLocalBounds(), true, kSupersample);
@@ -329,7 +329,7 @@ void ConvoAudioProcessorEditor::saveSupersampledScreenshot()
 }
 #endif
 
-float ConvoAudioProcessorEditor::uiScale() const
+float ConvoEditorContent::uiScale() const
 {
     // The paint context's physical scale is the ground truth (display DPI x host zoom); until the
     // first paint captures it, approximate as display DPI x the host's component transforms.
@@ -342,7 +342,7 @@ float ConvoAudioProcessorEditor::uiScale() const
     return scale > 0.0f ? scale : 1.0f;
 }
 
-void ConvoAudioProcessorEditor::rebuildThumbnail()
+void ConvoEditorContent::rebuildThumbnail()
 {
     const auto&  ir = processor.getBakedIR();
     const double sr = processor.getBakedIRSampleRate();
@@ -414,7 +414,7 @@ void ConvoAudioProcessorEditor::rebuildThumbnail()
 // cached rendering
 // ---------------------------------------------------------------------------
 
-void ConvoAudioProcessorEditor::renderWaveImage()
+void ConvoEditorContent::renderWaveImage()
 {
     waveImage = juce::Image();
     waveBlurImage = juce::Image();
@@ -447,7 +447,7 @@ void ConvoAudioProcessorEditor::renderWaveImage()
 // The trimmed+shaped kernel rendered across the full wave width; paint() scales it into the
 // selection rectangle so the fade/decay/taper land at the Start/End handles. Rebuilt only on a
 // commit (incl. trim-release), never during a drag.
-void ConvoAudioProcessorEditor::renderKernelImage()
+void ConvoEditorContent::renderKernelImage()
 {
     kernelImage = juce::Image();
     if (waveZone.isEmpty() || kernelThumbnail == nullptr || kernelThumbnail->getTotalLength() <= 0.0)
@@ -471,7 +471,7 @@ void ConvoAudioProcessorEditor::renderKernelImage()
 
 // IR Gain mapped to the waveform's vertical zoom, so the displayed amplitude tracks the wet
 // trim. 0 dB = 1.0 (unchanged); +6 dB doubles it, lower values shrink it toward the baseline.
-float ConvoAudioProcessorEditor::irGainVisualGain() const
+float ConvoEditorContent::irGainVisualGain() const
 {
     return juce::Decibels::decibelsToGain (
         processor.getAPVTS().getRawParameterValue ("irGain")->load(), -60.0f);
@@ -485,13 +485,13 @@ float ConvoAudioProcessorEditor::irGainVisualGain() const
 // height between layers/states is compressed. Full scale still lands at full height.
 // The thumbnail data is peak-normalized (see rebuildThumbnail — the cache is 8-bit), so
 // the zoom IS the drawn height: layerPeak is the remembered true peak of that layer.
-float ConvoAudioProcessorEditor::waveVisualZoom (float layerPeak) const
+float ConvoEditorContent::waveVisualZoom (float layerPeak) const
 {
     const float level = layerPeak * irGainVisualGain();
     return level > 1.0e-12f ? std::sqrt (level) : 0.0f;
 }
 
-void ConvoAudioProcessorEditor::renderBackground()
+void ConvoEditorContent::renderBackground()
 {
     if (getWidth() <= 0 || getHeight() <= 0)
         return;
@@ -581,7 +581,7 @@ void ConvoAudioProcessorEditor::renderBackground()
 // resolution, rather than baked into the (scaled) backgroundImage — baking softens glyphs
 // on HiDPI/fractional-scale displays. Cheap (a handful of short strings) and clipped to the
 // repaint region, so the cached-graphics optimisation is untouched.
-void ConvoAudioProcessorEditor::drawChromeText (juce::Graphics& g)
+void ConvoEditorContent::drawChromeText (juce::Graphics& g)
 {
     // header wordmark + tagline
     {
@@ -628,7 +628,7 @@ void ConvoAudioProcessorEditor::drawChromeText (juce::Graphics& g)
 // ---------------------------------------------------------------------------
 
 // level/peak arrive as fill proportions on the -60..0 dBFS scale (mapped in timerCallback)
-void ConvoAudioProcessorEditor::drawMeterFill (juce::Graphics& g, juce::Rectangle<int> zone,
+void ConvoEditorContent::drawMeterFill (juce::Graphics& g, juce::Rectangle<int> zone,
                                                float level, float peak, const juce::ColourGradient& fillGrad)
 {
     const auto well = zone.toFloat().reduced (1.5f);
@@ -663,7 +663,7 @@ void ConvoAudioProcessorEditor::drawMeterFill (juce::Graphics& g, juce::Rectangl
 // axis and the curve is the net magnitude of the wet EQ — Tone tilt (post-conv) times the
 // pre-IR HP/LP. Called only when those params (or the wave zone) change, so paint() never
 // recomputes it. The four Coefficients are reused (updated in place) — no per-redraw alloc.
-void ConvoAudioProcessorEditor::renderOverlay()
+void ConvoEditorContent::renderOverlay()
 {
     eqCurvePath.clear();
     monoMarkerX = -1.0f;
@@ -725,7 +725,7 @@ void ConvoAudioProcessorEditor::renderOverlay()
 }
 
 // Stroke the cached overlay — no recompute. Mint glow curve + copper bass-mono marker.
-void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
+void ConvoEditorContent::drawFilterOverlay (juce::Graphics& g)
 {
     if (eqCurvePath.isEmpty())
         return;
@@ -794,13 +794,13 @@ void ConvoAudioProcessorEditor::drawFilterOverlay (juce::Graphics& g)
 // IR trim handles (draggable Start / End on the waveform)
 // ---------------------------------------------------------------------------
 
-float ConvoAudioProcessorEditor::trimFracToX (float frac) const
+float ConvoEditorContent::trimFracToX (float frac) const
 {
     const auto z = waveZone.toFloat();
     return z.getX() + juce::jlimit (0.0f, 1.0f, frac) * z.getWidth();
 }
 
-float ConvoAudioProcessorEditor::trimXToFrac (int x) const
+float ConvoEditorContent::trimXToFrac (int x) const
 {
     const auto z = waveZone.toFloat();
     if (z.getWidth() <= 0.0f)
@@ -808,38 +808,38 @@ float ConvoAudioProcessorEditor::trimXToFrac (int x) const
     return juce::jlimit (0.0f, 1.0f, ((float) x - z.getX()) / z.getWidth());
 }
 
-float ConvoAudioProcessorEditor::liveTrimStart() const
+float ConvoEditorContent::liveTrimStart() const
 {
     return activeHandle != TrimHandle::none ? dragStartFrac
                                             : processor.getAPVTS().getRawParameterValue ("irStart")->load();
 }
 
-float ConvoAudioProcessorEditor::liveTrimEnd() const
+float ConvoEditorContent::liveTrimEnd() const
 {
     return activeHandle != TrimHandle::none ? dragEndFrac
                                             : processor.getAPVTS().getRawParameterValue ("irEnd")->load();
 }
 
-bool ConvoAudioProcessorEditor::displayReversed() const
+bool ConvoEditorContent::displayReversed() const
 {
     return processor.getAPVTS().getRawParameterValue ("reverse")->load() > 0.5f;
 }
 
-float ConvoAudioProcessorEditor::onsetDisplayFrac() const
+float ConvoEditorContent::onsetDisplayFrac() const
 {
     if (onsetFrac < 0.0f)
         return -1.0f;
     return displayReversed() ? 1.0f - onsetFrac : onsetFrac;
 }
 
-ConvoAudioProcessorEditor::TrimHandle ConvoAudioProcessorEditor::onsetHandle() const
+ConvoEditorContent::TrimHandle ConvoEditorContent::onsetHandle() const
 {
     // the spike sits at the display's right edge when reversed, so the End handle is the
     // one whose cut excludes it (bake mirrors it back to a raw head cut)
     return displayReversed() ? TrimHandle::end : TrimHandle::start;
 }
 
-ConvoAudioProcessorEditor::TrimHandle ConvoAudioProcessorEditor::trimHandleAt (juce::Point<int> p) const
+ConvoEditorContent::TrimHandle ConvoEditorContent::trimHandleAt (juce::Point<int> p) const
 {
     // only grab while a waveform is shown and the cursor is within the wave zone band
     if (! waveImage.isValid() || ! waveZone.contains (p))
@@ -858,7 +858,7 @@ ConvoAudioProcessorEditor::TrimHandle ConvoAudioProcessorEditor::trimHandleAt (j
 
 // Shade the trimmed-off regions and draw the two handles. Called from paint() over the
 // wave; no recompute — just reads the current Start/End params.
-void ConvoAudioProcessorEditor::drawTrimHandles (juce::Graphics& g)
+void ConvoEditorContent::drawTrimHandles (juce::Graphics& g)
 {
     if (! waveImage.isValid())
         return;
@@ -906,7 +906,7 @@ void ConvoAudioProcessorEditor::drawTrimHandles (juce::Graphics& g)
     drawHandle (ex, TrimHandle::end,   false);
 }
 
-void ConvoAudioProcessorEditor::mouseMove (const juce::MouseEvent& e)
+void ConvoEditorContent::mouseMove (const juce::MouseEvent& e)
 {
     if (aboutZone.contains (e.getPosition()))   // the "i" hotspot reads as clickable
     {
@@ -925,7 +925,7 @@ void ConvoAudioProcessorEditor::mouseMove (const juce::MouseEvent& e)
     }
 }
 
-void ConvoAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
+void ConvoEditorContent::mouseDown (const juce::MouseEvent& e)
 {
     if (e.mods.isPopupMenu())   // right-click on the IR display: reveal the file / audition
     {
@@ -1009,7 +1009,7 @@ void ConvoAudioProcessorEditor::mouseDown (const juce::MouseEvent& e)
     }
 }
 
-void ConvoAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
+void ConvoEditorContent::mouseDrag (const juce::MouseEvent& e)
 {
     if (draggingOutput)
     {
@@ -1038,7 +1038,7 @@ void ConvoAudioProcessorEditor::mouseDrag (const juce::MouseEvent& e)
     repaint (dropZone);   // cheap: re-blit the sharp/blurred regions, no re-bake
 }
 
-void ConvoAudioProcessorEditor::mouseUp (const juce::MouseEvent&)
+void ConvoEditorContent::mouseUp (const juce::MouseEvent&)
 {
     if (draggingOutput)
     {
@@ -1064,7 +1064,7 @@ void ConvoAudioProcessorEditor::mouseUp (const juce::MouseEvent&)
     }
 }
 
-void ConvoAudioProcessorEditor::setOutputFromMouseY (float y)
+void ConvoEditorContent::setOutputFromMouseY (float y)
 {
     const auto z = outMeterZone.toFloat();
     const float v = juce::jlimit (0.0f, 1.0f, (z.getBottom() - y) / juce::jmax (1.0f, z.getHeight()));
@@ -1073,14 +1073,14 @@ void ConvoAudioProcessorEditor::setOutputFromMouseY (float y)
     repaint (outMeterZone.expanded (16, 16));   // redraw the line + dB readout (and its overflow)
 }
 
-void ConvoAudioProcessorEditor::setLedTextColour (juce::Button& b, float amt, juce::Colour off, juce::Colour on)
+void ConvoEditorContent::setLedTextColour (juce::Button& b, float amt, juce::Colour off, juce::Colour on)
 {
     const auto c = off.interpolatedWith (on, juce::jlimit (0.0f, 1.0f, amt));   // both ids so it shows regardless of toggle
     b.setColour (juce::TextButton::textColourOnId,  c);
     b.setColour (juce::TextButton::textColourOffId, c);
 }
 
-void ConvoAudioProcessorEditor::showIRContextMenu()
+void ConvoEditorContent::showIRContextMenu()
 {
     auto& lib = processor.getIRLibrary();
     const auto file   = lib.getCurrentFile();
@@ -1119,7 +1119,7 @@ void ConvoAudioProcessorEditor::showIRContextMenu()
 // The header "i": Convo's "Appropriate Legal Notices" (AGPLv3 §0/§5) — copyright, no-warranty,
 // the licence, and an offer of the Corresponding Source. A plugin can't drive the host browser
 // reliably, but launchInDefaultBrowser is the conventional path for the source/licence links.
-void ConvoAudioProcessorEditor::showAboutMenu()
+void ConvoEditorContent::showAboutMenu()
 {
     auto upd = convo::updateInfo();
     juce::PopupMenu m;
@@ -1156,7 +1156,7 @@ void ConvoAudioProcessorEditor::showAboutMenu()
 //  - The X-Over crossover only does anything when Bass Mono is on, so dim it while it's off.
 //  - In HP / In LP filter the input by default; when Filter IR is on they're baked into the IR
 //    instead, so relabel "In -> IR" and tint them mint (matching the Filter IR tick) to show it.
-void ConvoAudioProcessorEditor::updateKnobStates()
+void ConvoEditorContent::updateKnobStates()
 {
     auto& a = processor.getAPVTS();
 
@@ -1172,7 +1172,7 @@ void ConvoAudioProcessorEditor::updateKnobStates()
     }
 }
 
-void ConvoAudioProcessorEditor::paint (juce::Graphics& g)
+void ConvoEditorContent::paint (juce::Graphics& g)
 {
     // Re-render the caches if the real render scale differs from the one they were built at
     // (first paint in a scaled host, monitor move, host zoom change) — otherwise they resample soft.
@@ -1305,7 +1305,7 @@ static void placeKnobInCell (juce::Rectangle<int> cell, juce::Slider& s, juce::L
     s.setBounds (juce::Rectangle<int> (col.getX(), stack.getY(), col.getWidth(), knobBox + valueGap + textBoxH));
 }
 
-void ConvoAudioProcessorEditor::layoutVolumeKnobs()
+void ConvoEditorContent::layoutVolumeKnobs()
 {
     if (volCellMix.isEmpty())
         return;   // first resized() hasn't run yet
@@ -1341,7 +1341,7 @@ void ConvoAudioProcessorEditor::layoutVolumeKnobs()
     mixSlider.setInterceptsMouseClicks (linkMerge > 0.5f, linkMerge > 0.5f);
 }
 
-void ConvoAudioProcessorEditor::resized()
+void ConvoEditorContent::resized()
 {
     auto area = getLocalBounds().reduced (14);
 
@@ -1518,7 +1518,7 @@ void ConvoAudioProcessorEditor::resized()
     renderOverlay();
 }
 
-bool ConvoAudioProcessorEditor::isInterestedInFileDrag (const juce::StringArray& files)
+bool ConvoEditorContent::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (const auto& f : files)
         if (processor.getIRLibrary().isSupported (juce::File (f)))
@@ -1526,19 +1526,19 @@ bool ConvoAudioProcessorEditor::isInterestedInFileDrag (const juce::StringArray&
     return false;
 }
 
-void ConvoAudioProcessorEditor::fileDragEnter (const juce::StringArray&, int, int)
+void ConvoEditorContent::fileDragEnter (const juce::StringArray&, int, int)
 {
     fileOver = true;
     repaint (dropZone);
 }
 
-void ConvoAudioProcessorEditor::fileDragExit (const juce::StringArray&)
+void ConvoEditorContent::fileDragExit (const juce::StringArray&)
 {
     fileOver = false;
     repaint (dropZone);
 }
 
-void ConvoAudioProcessorEditor::filesDropped (const juce::StringArray& files, int, int)
+void ConvoEditorContent::filesDropped (const juce::StringArray& files, int, int)
 {
     fileOver = false;
     for (const auto& f : files)
@@ -1553,13 +1553,13 @@ void ConvoAudioProcessorEditor::filesDropped (const juce::StringArray& files, in
     repaint (dropZone);
 }
 
-void ConvoAudioProcessorEditor::changeListenerCallback (juce::ChangeBroadcaster*)
+void ConvoEditorContent::changeListenerCallback (juce::ChangeBroadcaster*)
 {
     renderWaveImage();
     repaint (dropZone);
 }
 
-void ConvoAudioProcessorEditor::timerCallback()
+void ConvoEditorContent::timerCallback()
 {
     // the update check completes asynchronously; repaint the "i" once when it flips available
     if (! updateNoticeSeen && convo::updateInfo()->available.load (std::memory_order_acquire))
@@ -1737,7 +1737,7 @@ void ConvoAudioProcessorEditor::timerCallback()
     }
 }
 
-void ConvoAudioProcessorEditor::loadFile (const juce::File& file)
+void ConvoEditorContent::loadFile (const juce::File& file)
 {
     if (processor.loadIRFile (file))
     {
@@ -1758,7 +1758,7 @@ void ConvoAudioProcessorEditor::loadFile (const juce::File& file)
     }
 }
 
-void ConvoAudioProcessorEditor::openFileChooser()
+void ConvoEditorContent::openFileChooser()
 {
     chooser = std::make_unique<juce::FileChooser> ("Select an impulse response",
                                                    juce::File(),
@@ -1779,7 +1779,7 @@ void ConvoAudioProcessorEditor::openFileChooser()
 // presets — APVTS state snapshots in Documents/Convo/Presets/*.xml
 // ---------------------------------------------------------------------------
 
-void ConvoAudioProcessorEditor::loadPresetFile (const juce::File& file)
+void ConvoEditorContent::loadPresetFile (const juce::File& file)
 {
     if (processor.loadPreset (file))
     {
@@ -1791,7 +1791,7 @@ void ConvoAudioProcessorEditor::loadPresetFile (const juce::File& file)
     }
 }
 
-void ConvoAudioProcessorEditor::stepPreset (int direction)
+void ConvoEditorContent::stepPreset (int direction)
 {
     const auto files = processor.getPresetFiles();
     if (files.isEmpty())
@@ -1806,7 +1806,7 @@ void ConvoAudioProcessorEditor::stepPreset (int direction)
     loadPresetFile (files.getReference (index));
 }
 
-void ConvoAudioProcessorEditor::showPresetMenu()
+void ConvoEditorContent::showPresetMenu()
 {
     juce::PopupMenu menu;
     menu.addItem (1, "Save current as preset...");
@@ -1837,7 +1837,7 @@ void ConvoAudioProcessorEditor::showPresetMenu()
         });
 }
 
-void ConvoAudioProcessorEditor::promptSavePreset()
+void ConvoEditorContent::promptSavePreset()
 {
     savePresetWindow = std::make_unique<juce::AlertWindow> (
         "Save Preset", "Name this preset:", juce::MessageBoxIconType::NoIcon);
@@ -1857,4 +1857,37 @@ void ConvoAudioProcessorEditor::promptSavePreset()
             }
             savePresetWindow.reset();
         }), false);
+}
+
+//==============================================================================
+// ConvoAudioProcessorEditor: the resizable shell. See the class doc comment in
+// PluginEditor.h for why this exists — everything above this point (ConvoEditorContent)
+// stays laid out at a fixed 900x613 and knows nothing about the real window size.
+
+ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
+    : juce::AudioProcessorEditor (&p), audioProcessor (p), content (p)
+{
+    addAndMakeVisible (content);
+
+    const int designW = content.getWidth();
+    const int designH = content.getHeight();
+    const int minW = juce::roundToInt ((float) designW * 0.6f);
+    const int minH = juce::roundToInt ((float) designH * 0.6f);
+
+    setResizable (true, true);
+    setResizeLimits (minW, minH, designW * 2, designH * 2);
+    if (auto* c = getConstrainer())
+        c->setFixedAspectRatio ((double) designW / (double) designH);
+
+    const int savedWidth = (int) audioProcessor.getAPVTS().state.getProperty ("editorWidth", designW);
+    const int startWidth = juce::jlimit (minW, designW * 2, savedWidth);
+    setSize (startWidth, juce::roundToInt ((float) startWidth * designH / designW));
+}
+
+void ConvoAudioProcessorEditor::resized()
+{
+    const float scale = (float) getWidth() / (float) content.getWidth();
+    content.setTransform (juce::AffineTransform::scale (scale));
+
+    audioProcessor.getAPVTS().state.setProperty ("editorWidth", getWidth(), nullptr);
 }

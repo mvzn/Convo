@@ -46,22 +46,27 @@ private:
 };
 
 /**
-    Convo's editor. The heavy static chrome graphics (panels, meter wells, ticks, rules)
-    are rendered once into a cached image on resize; the waveform is rendered into its own
-    cached image only when the bake changes. Static chrome *text* (title, captions, meter
-    labels) is drawn live in paint() — baking it into the scaled cache softens glyphs on
-    HiDPI displays. paint() blits the caches, draws that text, then the few dynamic bits;
-    the 30 Hz timer repaints nothing unless a meter value actually moved, so the editor
-    idles at ~zero paint cost.
+    Convo's editor content, laid out at a fixed 900x613 logical size. Hosted inside
+    ConvoAudioProcessorEditor (below), which the host actually drag-resizes; that shell
+    scales this component to fit via an AffineTransform, so the fixed-pixel layout here
+    never needs to know the real on-screen size.
+
+    The heavy static chrome graphics (panels, meter wells, ticks, rules) are rendered once
+    into a cached image on resize; the waveform is rendered into its own cached image only
+    when the bake changes. Static chrome *text* (title, captions, meter labels) is drawn
+    live in paint() — baking it into the scaled cache softens glyphs on HiDPI displays.
+    paint() blits the caches, draws that text, then the few dynamic bits; the 30 Hz timer
+    repaints nothing unless a meter value actually moved, so the editor idles at ~zero
+    paint cost.
 */
-class ConvoAudioProcessorEditor : public juce::AudioProcessorEditor,
-                                  public juce::FileDragAndDropTarget,
-                                  public juce::ChangeListener,
-                                  private juce::Timer
+class ConvoEditorContent : public juce::Component,
+                           public juce::FileDragAndDropTarget,
+                           public juce::ChangeListener,
+                           private juce::Timer
 {
 public:
-    explicit ConvoAudioProcessorEditor (ConvoAudioProcessor&);
-    ~ConvoAudioProcessorEditor() override;
+    explicit ConvoEditorContent (ConvoAudioProcessor&);
+    ~ConvoEditorContent() override;
 
     void paint (juce::Graphics&) override;
     void resized() override;
@@ -240,6 +245,26 @@ private:
     // true peaks of the (peak-normalized) thumbnail layers — the 8-bit thumbnail cache
     // holds unit-peak data; these put the real level back in via waveVisualZoom
     float waveDispPeak = 0.0f, kernelDispPeak = 0.0f;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoEditorContent)
+};
+
+/** Resizable shell: the host drag-resizes this (fixed 900:613 aspect ratio via the
+    constrainer). The real UI is ConvoEditorContent, held at its native 900x613 size and
+    scaled to fit via an AffineTransform — its pixel-literal layout, LookAndFeel drawing,
+    and hit-testing all stay in that fixed logical space and never see the real window
+    size. The last on-screen width rides along on the APVTS state (the same way irPath
+    does) so the editor reopens at its last size. */
+class ConvoAudioProcessorEditor : public juce::AudioProcessorEditor
+{
+public:
+    explicit ConvoAudioProcessorEditor (ConvoAudioProcessor&);
+
+    void resized() override;
+
+private:
+    ConvoAudioProcessor& audioProcessor;
+    ConvoEditorContent   content;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (ConvoAudioProcessorEditor)
 };
