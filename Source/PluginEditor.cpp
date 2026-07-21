@@ -1175,14 +1175,25 @@ void ConvoEditorContent::updateKnobStates()
 void ConvoEditorContent::paint (juce::Graphics& g)
 {
     // Re-render the caches if the real render scale differs from the one they were built at
-    // (first paint in a scaled host, monitor move, host zoom change) — otherwise they resample soft.
+    // (first paint in a scaled host, monitor move, host zoom change, live drag-resize) —
+    // otherwise they resample soft. The very first paint renders right away; later changes
+    // (esp. a live drag-resize, which retriggers this every frame) are debounced — see
+    // kScaleRerenderDebounceTicks.
     const float ps = g.getInternalContext().getPhysicalPixelScaleFactor();
     if (ps > 0.0f && std::abs (ps - paintScale) > 0.01f)
     {
-        paintScale = ps;
-        renderBackground();
-        renderWaveImage();
-        renderKernelImage();
+        if (paintScale <= 0.0f)
+        {
+            paintScale = ps;
+            renderBackground();
+            renderWaveImage();
+            renderKernelImage();
+        }
+        else
+        {
+            pendingPaintScale      = ps;
+            scaleRerenderCountdown = kScaleRerenderDebounceTicks;
+        }
     }
 
     if (backgroundImage.isValid())
@@ -1566,6 +1577,17 @@ void ConvoEditorContent::timerCallback()
     {
         updateNoticeSeen = true;
         repaint (aboutZone.expanded (2));
+    }
+
+    // debounced re-render after the render scale settles (see paint() / kScaleRerenderDebounceTicks) —
+    // each further scale change (e.g. every frame of a live drag-resize) restarts the countdown
+    if (scaleRerenderCountdown > 0 && --scaleRerenderCountdown == 0)
+    {
+        paintScale = pendingPaintScale;
+        renderBackground();
+        renderWaveImage();
+        renderKernelImage();
+        repaint();
     }
 
     // meters show a -60..0 dBFS scale (like DAW meters): the processor's linear peaks are mapped

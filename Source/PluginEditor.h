@@ -124,6 +124,16 @@ private:
     float uiScale() const;             // physical px per logical px, for crisp caches
     float paintScale = 0.0f;           // real render scale captured in paint(); 0 = not yet seen
 
+    // A live drag-resize retriggers paint()'s scale check every frame (each transform step
+    // changes the physical pixel scale), so re-rendering the caches immediately there would
+    // re-run renderBackground()'s gradient/path work on every intermediate frame and stutter
+    // the drag. Past the first paint, a changed scale instead arms this countdown; timerCallback
+    // ticks it down and only re-renders once it reaches zero, restarting it on every further
+    // change — so dragging settles to one re-render, ~200 ms after the drag stops moving.
+    static constexpr int kScaleRerenderDebounceTicks = 6;   // ~200 ms at the 30 Hz timer
+    float pendingPaintScale = 0.0f;
+    int   scaleRerenderCountdown = 0;
+
     // IR trim handle geometry / hit-testing (all in editor-local coords)
     enum class TrimHandle { none, start, end };
     float trimFracToX (float frac) const;       // map a 0..1 fraction to an x in waveZone
