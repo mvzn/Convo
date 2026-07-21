@@ -1889,6 +1889,7 @@ void ConvoEditorContent::promptSavePreset()
 ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     : juce::AudioProcessorEditor (&p), audioProcessor (p), content (p)
 {
+    setOpaque (true);   // content always fully covers these bounds (see resized()); skip host compositing
     addAndMakeVisible (content);
 
     const int designW = content.getWidth();
@@ -1904,6 +1905,28 @@ ConvoAudioProcessorEditor::ConvoAudioProcessorEditor (ConvoAudioProcessor& p)
     const int savedWidth = (int) audioProcessor.getAPVTS().state.getProperty ("editorWidth", designW);
     const int startWidth = juce::jlimit (minW, designW * 2, savedWidth);
     setSize (startWidth, juce::roundToInt ((float) startWidth * designH / designW));
+
+    startTimer (15);   // poll for the peer -> timerCallback() (see the class doc comment for why)
+}
+
+ConvoAudioProcessorEditor::~ConvoAudioProcessorEditor()
+{
+    stopTimer();
+}
+
+void ConvoAudioProcessorEditor::timerCallback()
+{
+    if (auto* peer = getPeer())
+    {
+       #if JUCE_WINDOWS
+        peer->setCurrentRenderingEngine (0);   // GDI — see the class doc comment for why
+        repaint();                             // JUCE only auto-repaints after an engine switch from
+                                                // 8.0.14 on; force it explicitly since we're pinned to 8.0.6
+       #else
+        juce::ignoreUnused (peer);
+       #endif
+        stopTimer();
+    }
 }
 
 void ConvoAudioProcessorEditor::resized()

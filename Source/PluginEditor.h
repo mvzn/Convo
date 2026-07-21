@@ -264,15 +264,28 @@ private:
     scaled to fit via an AffineTransform — its pixel-literal layout, LookAndFeel drawing,
     and hit-testing all stay in that fixed logical space and never see the real window
     size. The last on-screen width rides along on the APVTS state (the same way irPath
-    does) so the editor reopens at its last size. */
-class ConvoAudioProcessorEditor : public juce::AudioProcessorEditor
+    does) so the editor reopens at its last size.
+
+    On Windows, JUCE 8.0.6's Direct2D renderer has a documented-in-its-own-source timing
+    race for host-embedded windows: a child HWND can report no valid monitor for up to 1s
+    after creation, which fully detaches it from the vblank dispatcher that drives Direct2D
+    painting, leaving the window unpainted (showing through white) until something else
+    (e.g. reopening the plugin, which creates a fresh peer) re-triggers it. There is no
+    build-time switch for Direct2D and no public API to force early readiness, so
+    timerCallback() below polls for the peer and permanently pins it to the software (GDI)
+    renderer instead, which doesn't use that swap-chain/vblank path at all. */
+class ConvoAudioProcessorEditor : public juce::AudioProcessorEditor,
+                                  private juce::Timer
 {
 public:
     explicit ConvoAudioProcessorEditor (ConvoAudioProcessor&);
+    ~ConvoAudioProcessorEditor() override;
 
     void resized() override;
 
 private:
+    void timerCallback() override;
+
     ConvoAudioProcessor& audioProcessor;
     ConvoEditorContent   content;
 
