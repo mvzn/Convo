@@ -1,0 +1,142 @@
+name: Sign macOS (test)
+
+# Manual-only smoke test for the macOS Developer ID signing + notarization pipeline.
+# release.yml only runs on a version tag and folds macOS signing into a full 3-platform
+# release; this workflow exercises just the macOS sign/notarize path on demand, so the
+# secrets can be validated (see the plugin-signing skill's CHECKLIST.md) before trusting
+# them in a real release. No signing logic lives here -- it's the same scripts release.yml
+# calls (packaging/macos/import-certs.sh, packaging/macos/build-pkg.sh), plus orchestration
+# and extra verification of the bare VST3/AU zips that build-pkg.sh doesn't itself verify.
+on:
+  workflow_dispatch:
+
+concurrency:
+  group: sign-macos-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sign-and-notarize:
+    name: Sign + notarize macOS build
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Fail loudly instead of falling back to an unsigned build (which is
+      # import-certs.sh's / build-pkg.sh's normal behavior when secrets are empty) --
+      # this workflow exists specifically to prove signing works end to end.
+      - name: Check signing secrets are present
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+          MACOS_CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          MACOS_PKG_SIGN_IDENTITY: ${{ secrets.MACOS_PKG_SIGN_IDENTITY }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: |
+          missing=()
+          for v in MACOS_CERT_P12 MACOS_CERT_PASSWORD MACOS_CODESIGN_IDENTITY \
+                   MACOS_PKG_SIGN_IDENTITY ASC_API_KEY_P8 ASC_KEY_ID ASC_ISSUER_ID; do
+            [[ -z "${!v:-}" ]] && missing+=("$v")
+          done
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::missing signing secrets: ${missing[*]}"
+            echo "See the plugin-signing skill's CHECKLIST.md (section A/C) for how to obtain and set these."
+            exit 1
+          fi
+          echo "All signing secrets present."
+
+      - name: Read version
+        shell: bash
+        run: |
+          V=$(grep -m1 -oE 'project\(Convo VERSION [0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+          echo "CONVO_VERSION=$V" >> "$GITHUB_ENV"
+          echo "Convo version: $V"
+
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+
+      - uses: actions/cache@v4
+        with:
+          path: build/_deps
+          key: sign-deps-macOS-${{ hashFiles('CMakeLists.txt') }}
+          restore-keys: sign-deps-macOS-
+
+      - uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          variant: sccache
+          key: sccache-sign-macOS
+          max-size: 500M
+
+      - name: Configure
+        shell: bash
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="x86_64;arm64" \
+            -DCMAKE_C_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=sccache \
+            -DCMAKE_POLICY_DEFAULT_CMP0141=NEW
+
+      - name: Build
+        shell: bash
+        run: cmake --build build --config Release --parallel
+
+      - name: Validate (pluginval)
+        shell: bash
+        run: |
+          set -e
+          BASE="https://github.com/Tracktion/pluginval/releases/latest/download"
+          curl -sSL -o pv.zip "$BASE/pluginval_macOS.zip"
+          unzip -o -q pv.zip
+          PV="pluginval.app/Contents/MacOS/pluginval"
+          "$PV" --strictness-level 10 --validate "build/Convo_artefacts/Release/VST3/Convo.vst3"
+          "$PV" --strictness-level 10 --validate "build/Convo_artefacts/Release/AU/Convo.component"
+
+      - name: Import signing certs
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
+        run: packaging/macos/import-certs.sh
+
+      - name: Sign, notarize, staple, package
+        env:
+          CODESIGN_IDENTITY: ${{ secrets.MACOS_CODESIGN_IDENTITY }}
+          PKG_SIGN_IDENTITY: ${{ secrets.MACOS_PKG_SIGN_IDENTITY }}
+          ASC_API_KEY_P8: ${{ secrets.ASC_API_KEY_P8 }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+        run: packaging/macos/build-pkg.sh "$CONVO_VERSION"
+
+      # build-pkg.sh already spctl/stapler-validates the .pkg as its last step; this adds
+      # the checks it doesn't do itself -- the bare VST3/AU zips that ship unpackaged.
+      - name: Verify signatures
+        shell: bash
+        run: |
+          set -e
+          echo "--- Bare VST3 ---"
+          rm -rf /tmp/verify-vst3 && mkdir -p /tmp/verify-vst3
+          ditto -x -k "dist/Convo-$CONVO_VERSION-macOS-VST3.zip" /tmp/verify-vst3
+          codesign -dv --verbose=4 "/tmp/verify-vst3/Convo.vst3"
+          codesign --verify --strict --verbose=2 "/tmp/verify-vst3/Convo.vst3"
+          xcrun stapler validate "/tmp/verify-vst3/Convo.vst3"
+
+          if [[ -f "dist/Convo-$CONVO_VERSION-macOS-AU.zip" ]]; then
+            echo "--- Bare AU ---"
+            rm -rf /tmp/verify-au && mkdir -p /tmp/verify-au
+            ditto -x -k "dist/Convo-$CONVO_VERSION-macOS-AU.zip" /tmp/verify-au
+            codesign -dv --verbose=4 "/tmp/verify-au/Convo.component"
+            xcrun stapler validate "/tmp/verify-au/Convo.component"
+          fi
+
+          echo "--- Installer pkg ---"
+          spctl -a -vv -t install "dist/Convo-$CONVO_VERSION-macOS.pkg"
+          xcrun stapler validate "dist/Convo-$CONVO_VERSION-macOS.pkg"
+
+      - name: Upload signed artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Convo-macOS-signed-${{ github.run_number }}
+          path: dist/
+          if-no-files-found: warn
+          retention-days: 14
